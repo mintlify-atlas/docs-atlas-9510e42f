@@ -1,0 +1,409 @@
+---
+title: "Timer API"
+description: "Complete API reference for FreeRTOS software timers"
+---
+
+Software timers allow functions to execute at a set time in the future or periodically. Timer functionality runs in the context of the timer daemon task (also called the timer service task). Requires `configUSE_TIMERS == 1`. All functions are declared in `timers.h`.
+
+**Key types**
+
+```c
+typedef struct tmrTimerControl *TimerHandle_t;
+
+/* Callback prototype — all timer callbacks must match this signature. */
+typedef void (*TimerCallbackFunction_t)( TimerHandle_t xTimer );
+```
+
+**Time conversion macro**
+
+```c
+/* Convert milliseconds to ticks. */
+TickType_t xTicks = pdMS_TO_TICKS( 500 ); /* 500 ms */
+```
+
+<Info>
+  Timer commands are sent through an internal queue to the timer daemon task. The daemon task priority is set by `configTIMER_TASK_PRIORITY`. Functions that send to this queue accept a `xTicksToWait` parameter to specify how long to block if the queue is full.
+</Info>
+
+---
+
+## Creation
+
+### xTimerCreate
+
+```c
+TimerHandle_t xTimerCreate(
+    const char * const      pcTimerName,
+    const TickType_t        xTimerPeriodInTicks,
+    const BaseType_t        xAutoReload,
+    void * const            pvTimerID,
+    TimerCallbackFunction_t pxCallbackFunction
+);
+```
+
+Creates a software timer using dynamic memory allocation. Timers are created in the dormant state. Requires `configSUPPORT_DYNAMIC_ALLOCATION == 1`.
+
+<ParamField path="pcTimerName" type="const char * const" required>
+  Human-readable name for the timer, used only for debugging. The kernel identifies timers by handle, not by name.
+</ParamField>
+
+<ParamField path="xTimerPeriodInTicks" type="const TickType_t" required>
+  Timer period in ticks. Must be greater than `0`. Use `pdMS_TO_TICKS()` to convert milliseconds.
+</ParamField>
+
+<ParamField path="xAutoReload" type="const BaseType_t" required>
+  `pdTRUE` for an auto-reload (periodic) timer that restarts automatically on expiry. `pdFALSE` for a one-shot timer that enters dormant state after expiry.
+</ParamField>
+
+<ParamField path="pvTimerID" type="void * const" required>
+  Application-defined identifier stored with the timer. Retrieved with `pvTimerGetTimerID()`. Useful when the same callback is shared by multiple timers.
+</ParamField>
+
+<ParamField path="pxCallbackFunction" type="TimerCallbackFunction_t" required>
+  Callback function invoked when the timer expires. Prototype: `void vCallback( TimerHandle_t xTimer )`.
+</ParamField>
+
+<ResponseField name="return" type="TimerHandle_t">
+  Handle to the created timer, or `NULL` if there was insufficient heap.
+</ResponseField>
+
+---
+
+### xTimerCreateStatic
+
+```c
+TimerHandle_t xTimerCreateStatic(
+    const char * const      pcTimerName,
+    const TickType_t        xTimerPeriodInTicks,
+    const BaseType_t        xAutoReload,
+    void * const            pvTimerID,
+    TimerCallbackFunction_t pxCallbackFunction,
+    StaticTimer_t          *pxTimerBuffer
+);
+```
+
+Creates a timer using static memory. Requires `configSUPPORT_STATIC_ALLOCATION == 1`.
+
+Parameters are the same as `xTimerCreate()`, plus:
+
+<ParamField path="pxTimerBuffer" type="StaticTimer_t *" required>
+  Pointer to a `StaticTimer_t` variable that will hold the timer's data structure.
+</ParamField>
+
+<ResponseField name="return" type="TimerHandle_t">
+  Handle to the created timer, or `NULL` if `pxTimerBuffer` is `NULL`.
+</ResponseField>
+
+---
+
+## Starting, stopping, and resetting
+
+All of these functions post a command to the timer command queue and return `pdPASS` or `pdFAIL` depending on whether the command was accepted.
+
+### xTimerStart
+
+```c
+BaseType_t xTimerStart( TimerHandle_t xTimer, TickType_t xTicksToWait );
+```
+
+Starts a dormant timer or restarts an already-active timer (equivalent to `xTimerReset()` when already active).
+
+<ParamField path="xTimer" type="TimerHandle_t" required>
+  Handle to the timer.
+</ParamField>
+
+<ParamField path="xTicksToWait" type="TickType_t" required>
+  Ticks to block waiting for space on the timer command queue. Ignored if called before the scheduler starts.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if the command was queued. `pdFAIL` if the queue was full.
+</ResponseField>
+
+---
+
+### xTimerStop
+
+```c
+BaseType_t xTimerStop( TimerHandle_t xTimer, TickType_t xTicksToWait );
+```
+
+Stops a timer, placing it in the dormant state. Parameters and return value as per `xTimerStart()`.
+
+---
+
+### xTimerReset
+
+```c
+BaseType_t xTimerReset( TimerHandle_t xTimer, TickType_t xTicksToWait );
+```
+
+Restarts a timer. If the timer was dormant, this starts it. If active, it re-evaluates its expiry time from the moment of the call. Parameters and return value as per `xTimerStart()`.
+
+---
+
+### xTimerChangePeriod
+
+```c
+BaseType_t xTimerChangePeriod(
+    TimerHandle_t xTimer,
+    TickType_t    xNewPeriod,
+    TickType_t    xTicksToWait
+);
+```
+
+Changes the period of a timer. If the timer was dormant, this also starts it.
+
+<ParamField path="xTimer" type="TimerHandle_t" required>Handle to the timer.</ParamField>
+<ParamField path="xNewPeriod" type="TickType_t" required>New period in ticks. Must be greater than `0`.</ParamField>
+<ParamField path="xTicksToWait" type="TickType_t" required>Ticks to wait for space on the timer command queue.</ParamField>
+
+<ResponseField name="return" type="BaseType_t">`pdPASS` or `pdFAIL`.</ResponseField>
+
+---
+
+### xTimerDelete
+
+```c
+BaseType_t xTimerDelete( TimerHandle_t xTimer, TickType_t xTicksToWait );
+```
+
+Deletes a timer. The handle must not be used after this call.
+
+<ParamField path="xTimer" type="TimerHandle_t" required>Handle to the timer to delete.</ParamField>
+<ParamField path="xTicksToWait" type="TickType_t" required>Ticks to wait for queue space.</ParamField>
+<ResponseField name="return" type="BaseType_t">`pdPASS` or `pdFAIL`.</ResponseField>
+
+---
+
+## ISR variants
+
+### xTimerStartFromISR
+
+```c
+BaseType_t xTimerStartFromISR(
+    TimerHandle_t  xTimer,
+    BaseType_t    *pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xTimerStart()`.
+
+<ParamField path="xTimer" type="TimerHandle_t" required>Handle to the timer.</ParamField>
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t *" required>Set to `pdTRUE` if the command unblocked the timer daemon task at higher priority. Initialize to `pdFALSE`.</ParamField>
+<ResponseField name="return" type="BaseType_t">`pdPASS` or `pdFAIL`.</ResponseField>
+
+---
+
+### xTimerStopFromISR
+
+```c
+BaseType_t xTimerStopFromISR(
+    TimerHandle_t  xTimer,
+    BaseType_t    *pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xTimerStop()`. Parameters and return value as per `xTimerStartFromISR()`.
+
+---
+
+### xTimerResetFromISR
+
+```c
+BaseType_t xTimerResetFromISR(
+    TimerHandle_t  xTimer,
+    BaseType_t    *pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xTimerReset()`. Parameters and return value as per `xTimerStartFromISR()`.
+
+---
+
+### xTimerChangePeriodFromISR
+
+```c
+BaseType_t xTimerChangePeriodFromISR(
+    TimerHandle_t  xTimer,
+    TickType_t     xNewPeriod,
+    BaseType_t    *pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xTimerChangePeriod()`.
+
+<ParamField path="xTimer" type="TimerHandle_t" required>Handle to the timer.</ParamField>
+<ParamField path="xNewPeriod" type="TickType_t" required>New period in ticks.</ParamField>
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t *" required>Set to `pdTRUE` if the daemon task was unblocked at higher priority.</ParamField>
+<ResponseField name="return" type="BaseType_t">`pdPASS` or `pdFAIL`.</ResponseField>
+
+---
+
+## Query functions
+
+### xTimerIsTimerActive
+
+```c
+BaseType_t xTimerIsTimerActive( TimerHandle_t xTimer );
+```
+
+Queries whether a timer is active (started and not yet expired for one-shot, or running for auto-reload) or dormant.
+
+<ParamField path="xTimer" type="TimerHandle_t" required>Handle to the timer.</ParamField>
+<ResponseField name="return" type="BaseType_t">`pdFALSE` if dormant. A non-zero value if active.</ResponseField>
+
+---
+
+### xTimerGetTimerDaemonTaskHandle
+
+```c
+TaskHandle_t xTimerGetTimerDaemonTaskHandle( void );
+```
+
+Returns the task handle of the timer daemon task. Must not be called before the scheduler has started.
+
+<ResponseField name="return" type="TaskHandle_t">Handle of the timer daemon task.</ResponseField>
+
+---
+
+### pvTimerGetTimerID
+
+```c
+void *pvTimerGetTimerID( const TimerHandle_t xTimer );
+```
+
+Retrieves the ID that was assigned to the timer when it was created (or last set by `vTimerSetTimerID()`).
+
+<ParamField path="xTimer" type="const TimerHandle_t" required>Handle to the timer.</ParamField>
+<ResponseField name="return" type="void *">The timer ID.</ResponseField>
+
+---
+
+### vTimerSetTimerID
+
+```c
+void vTimerSetTimerID( TimerHandle_t xTimer, void *pvNewID );
+```
+
+Updates the timer ID. Can be called from within a timer callback.
+
+<ParamField path="xTimer" type="TimerHandle_t" required>Handle to the timer.</ParamField>
+<ParamField path="pvNewID" type="void *" required>New ID value to store.</ParamField>
+
+---
+
+### pcTimerGetName
+
+```c
+const char *pcTimerGetName( TimerHandle_t xTimer );
+```
+
+Returns the text name assigned to the timer at creation.
+
+<ParamField path="xTimer" type="TimerHandle_t" required>Handle to the timer.</ParamField>
+<ResponseField name="return" type="const char *">Pointer to the timer's name string.</ResponseField>
+
+---
+
+### xTimerGetPeriod
+
+```c
+TickType_t xTimerGetPeriod( TimerHandle_t xTimer );
+```
+
+Returns the period of the timer in ticks.
+
+<ParamField path="xTimer" type="TimerHandle_t" required>Handle to the timer.</ParamField>
+<ResponseField name="return" type="TickType_t">Timer period in ticks.</ResponseField>
+
+---
+
+### xTimerGetExpiryTime
+
+```c
+TickType_t xTimerGetExpiryTime( TimerHandle_t xTimer );
+```
+
+Returns the tick count at which the timer will next expire. If this value is less than the current tick count, the timer has wrapped around.
+
+<ParamField path="xTimer" type="TimerHandle_t" required>Handle to the timer.</ParamField>
+<ResponseField name="return" type="TickType_t">Absolute tick count of the next expiry. Undefined if the timer is not active.</ResponseField>
+
+---
+
+## Examples
+
+### Auto-reload (periodic) timer
+
+```c
+#include "FreeRTOS.h"
+#include "timers.h"
+
+#define LED_PERIOD_MS  500
+
+static TimerHandle_t xLEDTimer;
+
+/* Callback: toggle an LED every 500 ms. */
+static void vLEDTimerCallback( TimerHandle_t xTimer )
+{
+    ( void ) xTimer;
+    /* Toggle LED here. */
+}
+
+void vSetup( void )
+{
+    xLEDTimer = xTimerCreate(
+        "LEDTimer",                        /* Name (debug only). */
+        pdMS_TO_TICKS( LED_PERIOD_MS ),    /* Period. */
+        pdTRUE,                            /* Auto-reload. */
+        ( void * ) 0,                      /* Timer ID (not used). */
+        vLEDTimerCallback );               /* Callback. */
+
+    configASSERT( xLEDTimer != NULL );
+
+    /* Start the timer. Block up to 10 ticks if the command queue is full. */
+    xTimerStart( xLEDTimer, pdMS_TO_TICKS( 10 ) );
+}
+```
+
+---
+
+### One-shot watchdog timer
+
+```c
+#include "FreeRTOS.h"
+#include "timers.h"
+
+#define WATCHDOG_TIMEOUT_MS  5000
+
+static TimerHandle_t xWatchdogTimer;
+
+/* Callback: watchdog expired — system did not kick in time. */
+static void vWatchdogExpired( TimerHandle_t xTimer )
+{
+    ( void ) xTimer;
+    /* Perform safe shutdown or system reset. */
+    /* configASSERT( 0 ); */
+}
+
+/* Called periodically by the monitored task to prevent expiry. */
+void vKickWatchdog( void )
+{
+    /* Reset the one-shot timer so it does not expire. */
+    xTimerReset( xWatchdogTimer, 0 );
+}
+
+void vSetup( void )
+{
+    xWatchdogTimer = xTimerCreate(
+        "Watchdog",
+        pdMS_TO_TICKS( WATCHDOG_TIMEOUT_MS ),
+        pdFALSE,           /* One-shot. */
+        ( void * ) 0,
+        vWatchdogExpired );
+
+    configASSERT( xWatchdogTimer != NULL );
+    xTimerStart( xWatchdogTimer, 0 );
+}
+```

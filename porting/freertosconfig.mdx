@@ -1,0 +1,390 @@
+---
+title: "FreeRTOSConfig.h Reference"
+description: "Complete reference for all FreeRTOSConfig.h configuration macros"
+---
+
+`FreeRTOSConfig.h` is an application-supplied header file that the FreeRTOS kernel `#include`s at build time. It controls every aspect of kernel behavior: scheduling policy, tick rate, available features, memory allocation, and interrupt priority levels.
+
+<Warning>
+`FreeRTOSConfig.h` is **not** shipped by the kernel repository — you must provide it. Place it in a directory that is on your compiler's include path and expose that directory through the `freertos_config` CMake target. If the file is missing the build will fail with a fatal error.
+</Warning>
+
+A fully commented template is available at `examples/template_configuration/FreeRTOSConfig.h` in the kernel repository.
+
+<AccordionGroup>
+
+  <Accordion title="Hardware">
+
+Macros that describe the hardware the kernel is running on.
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configCPU_CLOCK_HZ` | `unsigned long` | `20000000` | Frequency (Hz) of the clock driving the peripheral that generates the kernel tick interrupt. Must match your hardware. On most Cortex-M devices this is the core clock frequency. |
+| `configSYSTICK_CLOCK_HZ` | `unsigned long` | undefined | ARM Cortex-M only. Define only when the SysTick timer runs at a different frequency to the CPU core. When undefined, `configCPU_CLOCK_HZ` is used for both. |
+
+```c
+/* 20 MHz QEMU default — replace with your actual clock */
+#define configCPU_CLOCK_HZ    ( ( unsigned long ) 20000000 )
+
+/* Uncomment and set if SysTick ≠ CPU clock:
+ * #define configSYSTICK_CLOCK_HZ   [platform specific]
+ */
+```
+
+  </Accordion>
+
+  <Accordion title="Scheduling">
+
+Macros that control when and how the scheduler switches tasks.
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configTICK_RATE_HZ` | integer | `100` | Tick interrupt frequency in Hz. Higher values increase timer resolution but add interrupt overhead. 100–1000 Hz is typical. |
+| `configUSE_PREEMPTION` | 0 / 1 | `1` | `1` = preemptive scheduling (higher-priority ready task runs immediately). `0` = cooperative scheduling (task yields explicitly). |
+| `configUSE_TIME_SLICING` | 0 / 1 | `0` | `1` = round-robin between equal-priority ready tasks on every tick. `0` = no automatic switch between equal-priority tasks. Only relevant when `configUSE_PREEMPTION` is `1`. |
+| `configUSE_PORT_OPTIMISED_TASK_SELECTION` | 0 / 1 | `0` | `1` = use a CLZ (count leading zeros) hardware instruction to find the highest-priority ready task. Faster but limits `configMAX_PRIORITIES` to 32. `0` = generic C algorithm, works on all ports. |
+| `configUSE_TICKLESS_IDLE` | 0 / 1 | `0` | `1` = enable tickless idle mode; the tick interrupt is suppressed when only the idle task is running. Reduces power consumption. Not supported by all ports. |
+| `configMAX_PRIORITIES` | integer | `5` | Number of task priority levels. Tasks can be assigned priorities `0` (lowest) to `configMAX_PRIORITIES - 1` (highest). |
+| `configIDLE_SHOULD_YIELD` | 0 / 1 | `1` | `1` = idle task yields to any application task at priority 0 before exhausting its timeslice. `0` = idle task uses its full timeslice. |
+| `configTICK_TYPE_WIDTH_IN_BITS` | constant | `TICK_TYPE_WIDTH_64_BITS` | Controls the width of `TickType_t`. Use `TICK_TYPE_WIDTH_16_BITS`, `TICK_TYPE_WIDTH_32_BITS`, or `TICK_TYPE_WIDTH_64_BITS`. Older code used `configUSE_16_BIT_TICKS` instead (still accepted for backward compatibility). |
+
+```c
+#define configTICK_RATE_HZ                         100
+#define configUSE_PREEMPTION                       1
+#define configUSE_TIME_SLICING                     0
+#define configUSE_PORT_OPTIMISED_TASK_SELECTION    0
+#define configUSE_TICKLESS_IDLE                    0
+#define configMAX_PRIORITIES                       5
+#define configIDLE_SHOULD_YIELD                    1
+#define configTICK_TYPE_WIDTH_IN_BITS              TICK_TYPE_WIDTH_64_BITS
+```
+
+  </Accordion>
+
+  <Accordion title="Task management">
+
+Macros that control task structure size, naming, tracing, and SMP behavior.
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configMINIMAL_STACK_SIZE` | integer (words) | `128` | Stack size in **words** (not bytes) for the idle task. Also used as a convenient minimum for application tasks in demos. |
+| `configMAX_TASK_NAME_LEN` | integer | `16` | Maximum length of a task's human-readable name, including the null terminator. |
+| `configUSE_TRACE_FACILITY` | 0 / 1 | `0` | `1` = include extra fields in the TCB used by trace and visualisation tools (e.g. Tracealyzer, SystemView). |
+| `configUSE_STATS_FORMATTING_FUNCTIONS` | 0 / 1 | `0` | `1` = include `vTaskList()` and `vTaskGetRunTimeStats()`. These functions depend on `sprintf` and add code size. Requires `configUSE_TRACE_FACILITY 1`. |
+| `configQUEUE_REGISTRY_SIZE` | integer | `0` | Maximum number of queues and semaphores visible in the queue registry. Only needed by kernel-aware debuggers (e.g. SEGGER J-Link). |
+| `configNUMBER_OF_CORES` | integer | `1` (default) | Number of available processor cores. Set to more than `1` to enable SMP mode. Defaults to `1` if left undefined. |
+| `configUSE_CORE_AFFINITY` | 0 / 1 | `0` | SMP only. `1` = enable `vTaskCoreAffinitySet`/`vTaskCoreAffinityGet` APIs to pin tasks to specific cores. |
+| `configRUN_MULTIPLE_PRIORITIES` | 0 / 1 | `0` | SMP only. `1` = allow tasks of different priorities to run simultaneously on different cores. `0` = a lower-priority task never runs if a higher-priority task is ready. |
+| `configUSE_TASK_PREEMPTION_DISABLE` | 0 / 1 | `0` | SMP only. `1` = individual tasks can be switched between preemptive and cooperative mode at runtime via `vTaskPreemptionDisable`/`vTaskPreemptionEnable`. |
+| `configTASK_DEFAULT_CORE_AFFINITY` | mask | `tskNO_AFFINITY` | SMP only. Default core affinity mask for tasks created without an explicit affinity. |
+| `configNUM_THREAD_LOCAL_STORAGE_POINTERS` | integer | `0` | Number of thread-local storage pointer slots per task. |
+| `configENABLE_BACKWARD_COMPATIBILITY` | 0 / 1 | `0` | `1` = map old FreeRTOS type and function names to their current equivalents. |
+| `configUSE_NEWLIB_REENTRANT` | 0 / 1 | `0` | `1` = allocate a newlib `_reent` struct per task for newlib reentrancy support. Requires system-wide `malloc` locks. |
+| `configSTACK_DEPTH_TYPE` | type | `size_t` | C type used for the stack depth parameter in `xTaskCreate()` and related APIs. |
+| `configMESSAGE_BUFFER_LENGTH_TYPE` | type | `size_t` | C type used to store message lengths in message buffers. Use `uint8_t` if messages are always short. |
+| `configHEAP_CLEAR_MEMORY_ON_FREE` | 0 / 1 | `1` | `1` = zero memory blocks returned by `vPortFree()`. Helps catch use-after-free bugs. |
+| `configSTATS_BUFFER_MAX_LENGTH` | integer | `0xFFFF` | Buffer length assumed by `vTaskList`/`vTaskGetRunTimeStats`. New code should use `vTaskListTasks`/`vTaskGetRunTimeStatistics` and pass the length explicitly. |
+
+  </Accordion>
+
+  <Accordion title="Memory allocation">
+
+Macros that control static versus dynamic allocation and heap placement.
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configSUPPORT_STATIC_ALLOCATION` | 0 / 1 | `1` | `1` = include `xTaskCreateStatic()` and the static variants of other object-creation APIs. The application must implement `vApplicationGetIdleTaskMemory()` (and `vApplicationGetTimerTaskMemory()` if timers are used) unless `configKERNEL_PROVIDED_STATIC_MEMORY` is `1`. |
+| `configSUPPORT_DYNAMIC_ALLOCATION` | 0 / 1 | `1` | `1` = include `xTaskCreate()` and the dynamic variants of object-creation APIs. Requires a heap implementation (`FREERTOS_HEAP` 1–5 or custom). Defaults to `1` if left undefined. |
+| `configTOTAL_HEAP_SIZE` | bytes | `4096` | Total size of the FreeRTOS heap in bytes. Used by `heap_1.c`, `heap_2.c`, and `heap_4.c`. The array appears in the `.bss` section. Must be tuned to your application. |
+| `configAPPLICATION_ALLOCATED_HEAP` | 0 / 1 | `0` | `1` = the application defines the `ucHeap[]` array and controls its placement (e.g. via linker section attributes). `0` = the linker places it automatically. |
+| `configSTACK_ALLOCATION_FROM_SEPARATE_HEAP` | 0 / 1 | `0` | `1` = task stacks are allocated from a separate heap via `pvPortMallocStack()`/`vPortFreeStack()` (application-supplied). Useful for placing stacks in fast SRAM. |
+| `configENABLE_HEAP_PROTECTOR` | 0 / 1 | `0` | `1` = enable bounds checking and pointer obfuscation in `heap_4.c` and `heap_5.c` to help detect heap corruption. |
+| `configKERNEL_PROVIDED_STATIC_MEMORY` | 0 / 1 | `1` | `1` = the kernel provides built-in implementations of `vApplicationGetIdleTaskMemory()` and `vApplicationGetTimerTaskMemory()`. Set to `0` if you want to provide your own. |
+
+```c
+#define configSUPPORT_STATIC_ALLOCATION              1
+#define configSUPPORT_DYNAMIC_ALLOCATION             1
+#define configTOTAL_HEAP_SIZE                        4096
+#define configAPPLICATION_ALLOCATED_HEAP             0
+#define configSTACK_ALLOCATION_FROM_SEPARATE_HEAP    0
+```
+
+  </Accordion>
+
+  <Accordion title="Hooks and callbacks">
+
+Macros that enable application-defined callback functions called by the kernel at specific points.
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configUSE_IDLE_HOOK` | 0 / 1 | `0` | `1` = call `vApplicationIdleHook()` each time the idle task runs. The function must never block. |
+| `configUSE_TICK_HOOK` | 0 / 1 | `0` | `1` = call `vApplicationTickHook()` every tick interrupt. Runs in ISR context; must not call non-ISR-safe FreeRTOS APIs. |
+| `configCHECK_FOR_STACK_OVERFLOW` | 0 / 1 / 2 | `2` | `0` = no check. `1` = fast check (stack pointer out of bounds at context switch). `2` = pattern check (detects most overflows, slightly slower). Both methods call `vApplicationStackOverflowHook()` when an overflow is detected. |
+| `configUSE_MALLOC_FAILED_HOOK` | 0 / 1 | `0` | `1` = call `vApplicationMallocFailedHook()` when `pvPortMalloc()` returns NULL. Defaults to `0` if left undefined. |
+| `configUSE_DAEMON_TASK_STARTUP_HOOK` | 0 / 1 | `0` | `1` = call `vApplicationDaemonTaskStartupHook()` once the first time the timer/daemon task runs. Useful for deferred hardware initialisation. |
+| `configUSE_SB_COMPLETED_CALLBACK` | 0 / 1 | `0` | `1` = enable per-instance send/receive completion callbacks for stream buffers and message buffers via `xStreamBufferCreateWithCallback()`. |
+| `configUSE_PASSIVE_IDLE_HOOK` | 0 / 1 | `0` | SMP only. `1` = call `vApplicationPassiveIdleHook()` in the passive idle task on each core that has no work. |
+
+```c
+#define configUSE_IDLE_HOOK                   0
+#define configUSE_TICK_HOOK                   0
+#define configCHECK_FOR_STACK_OVERFLOW        2
+#define configUSE_MALLOC_FAILED_HOOK          0
+#define configUSE_DAEMON_TASK_STARTUP_HOOK    0
+```
+
+When `configCHECK_FOR_STACK_OVERFLOW` is non-zero the application must provide:
+
+```c
+void vApplicationStackOverflowHook( TaskHandle_t xTask, char *pcTaskName );
+```
+
+  </Accordion>
+
+  <Accordion title="Runtime stats">
+
+Macros required to collect per-task CPU usage statistics.
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configGENERATE_RUN_TIME_STATS` | 0 / 1 | `0` | `1` = enable run-time statistics. The kernel records a time stamp on every context switch. Requires `portCONFIGURE_TIMER_FOR_RUN_TIME_STATS` and `portGET_RUN_TIME_COUNTER_VALUE` to be defined. |
+| `configUSE_TRACE_FACILITY` | 0 / 1 | `0` | Must also be `1` when run-time stats are enabled, as the extra TCB fields are needed to store the accumulated time. |
+| `configUSE_STATS_FORMATTING_FUNCTIONS` | 0 / 1 | `0` | `1` = include `vTaskList()` and `vTaskGetRunTimeStats()` for printing statistics to a character buffer. |
+
+When `configGENERATE_RUN_TIME_STATS` is `1`, the application must define two port macros (typically in `FreeRTOSConfig.h` or a port-specific header):
+
+```c
+/* Configure a high-resolution timer (at least 10× the tick rate) */
+#define portCONFIGURE_TIMER_FOR_RUN_TIME_STATS()   vConfigureTimerForRunTimeStats()
+
+/* Return the current timer count */
+#define portGET_RUN_TIME_COUNTER_VALUE()            ulGetRunTimeCounterValue()
+```
+
+Call `vTaskGetRunTimeStatistics()` (preferred) or `vTaskGetRunTimeStats()` to retrieve the data:
+
+```c
+char statsBuffer[512];
+vTaskGetRunTimeStatistics( statsBuffer, sizeof( statsBuffer ) );
+printf( "%s\n", statsBuffer );
+```
+
+  </Accordion>
+
+  <Accordion title="Co-routines">
+
+Co-routines are a legacy lightweight alternative to tasks, intended for very memory-constrained systems. New designs should use tasks instead.
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configUSE_CO_ROUTINES` | 0 / 1 | `0` | `1` = include co-routine support. `croutine.c` must be added to the build. Defaults to `0` if left undefined. |
+| `configMAX_CO_ROUTINE_PRIORITIES` | integer | `1` | Number of co-routine priority levels. Defaults to `0` if left undefined. |
+
+```c
+#define configUSE_CO_ROUTINES              0
+#define configMAX_CO_ROUTINE_PRIORITIES    1
+```
+
+  </Accordion>
+
+  <Accordion title="Optional features">
+
+Macros that include or exclude individual kernel objects and APIs.
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configUSE_MUTEXES` | 0 / 1 | `1` | `1` = include mutex APIs (`xSemaphoreCreateMutex`, priority inheritance). |
+| `configUSE_RECURSIVE_MUTEXES` | 0 / 1 | `1` | `1` = include recursive mutex APIs (`xSemaphoreCreateRecursiveMutex`). |
+| `configUSE_COUNTING_SEMAPHORES` | 0 / 1 | `1` | `1` = include counting semaphore APIs (`xSemaphoreCreateCounting`). |
+| `configUSE_TASK_NOTIFICATIONS` | 0 / 1 | `1` | `1` = include direct-to-task notification APIs. Lighter-weight than semaphores for single-producer/single-consumer patterns. |
+| `configTASK_NOTIFICATION_ARRAY_ENTRIES` | integer | `1` | Number of notification slots per task. Each slot can hold one 32-bit value. Defaults to `1`. |
+| `configUSE_TIMERS` | 0 / 1 | `1` | `1` = include software timer functionality. `timers.c` must be in the build. |
+| `configTIMER_TASK_PRIORITY` | integer | `configMAX_PRIORITIES - 1` | Priority of the timer/daemon task. |
+| `configTIMER_TASK_STACK_DEPTH` | integer (words) | `configMINIMAL_STACK_SIZE` | Stack size (in words) for the timer task. |
+| `configTIMER_QUEUE_LENGTH` | integer | `10` | Length of the command queue used to send commands to the timer task. |
+| `configUSE_EVENT_GROUPS` | 0 / 1 | `1` | `1` = include event group functionality. `event_groups.c` must be in the build. Defaults to `1` if left undefined. |
+| `configUSE_STREAM_BUFFERS` | 0 / 1 | `1` | `1` = include stream buffer (and message buffer) functionality. `stream_buffer.c` must be in the build. Defaults to `1` if left undefined. |
+| `configUSE_QUEUE_SETS` | 0 / 1 | `0` | `1` = include queue set APIs (`xQueueCreateSet`). |
+| `configUSE_APPLICATION_TASK_TAG` | 0 / 1 | `0` | `1` = include `vTaskSetApplicationTaskTag` and `xTaskCallApplicationTaskHook`. |
+| `configUSE_POSIX_ERRNO` | 0 / 1 | `0` | `1` = include a per-task `FreeRTOS_errno` variable. |
+| `configUSE_MINI_LIST_ITEM` | 0 / 1 | `1` | `1` = use a smaller `MiniListItem_t` for list end markers to save RAM. May violate strict aliasing in some compilers. |
+
+### INCLUDE_ macros
+
+Set these to `1` to include the corresponding API function in the build. Most linkers remove unused functions regardless, but explicitly setting to `0` guarantees exclusion.
+
+```c
+#define INCLUDE_vTaskPrioritySet               1
+#define INCLUDE_uxTaskPriorityGet              1
+#define INCLUDE_vTaskDelete                    1
+#define INCLUDE_vTaskSuspend                   1
+#define INCLUDE_xTaskDelayUntil                1
+#define INCLUDE_vTaskDelay                     1
+#define INCLUDE_xTaskGetSchedulerState         1
+#define INCLUDE_xTaskGetCurrentTaskHandle      1
+#define INCLUDE_uxTaskGetStackHighWaterMark    0
+#define INCLUDE_xTaskGetIdleTaskHandle         0
+#define INCLUDE_eTaskGetState                  0
+#define INCLUDE_xTimerPendFunctionCall         0
+#define INCLUDE_xTaskAbortDelay                0
+#define INCLUDE_xTaskGetHandle                 0
+#define INCLUDE_xTaskResumeFromISR             1
+```
+
+  </Accordion>
+
+  <Accordion title="Interrupt handling">
+
+Macros that configure interrupt priority levels on architectures that support interrupt nesting (primarily ARM Cortex-M3 and later).
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configKERNEL_INTERRUPT_PRIORITY` | integer | `0` | Priority of the tick interrupt and the context-switch interrupt (PendSV on Cortex-M). Must be set to the **lowest** interrupt priority value on your device. On Cortex-M this is typically `255` (or the equivalent shifted value for the number of implemented priority bits). |
+| `configMAX_SYSCALL_INTERRUPT_PRIORITY` | integer | `0` | Highest interrupt priority from which FreeRTOS ISR-safe API functions (`...FromISR`) may be called. Interrupts with a numerically **lower** priority value than this must never call any FreeRTOS API. |
+| `configMAX_API_CALL_INTERRUPT_PRIORITY` | integer | `0` | Synonym for `configMAX_SYSCALL_INTERRUPT_PRIORITY` used by some ports (e.g. PIC32, ARM Cortex-A). Only one of the two names is used depending on the port. |
+
+<Warning>
+On ARM Cortex-M, lower numeric values mean **higher** interrupt priority (counterintuitive). `configKERNEL_INTERRUPT_PRIORITY` must be the **numerically highest** value (lowest urgency) supported by your device, and `configMAX_SYSCALL_INTERRUPT_PRIORITY` must be lower (higher urgency) than the kernel interrupt. Refer to the [FreeRTOS Cortex-M3/M4 documentation](https://www.freertos.org/RTOS-Cortex-M3-M4.html) for worked examples.
+</Warning>
+
+```c
+/* Example for a device with 3 bits of priority (8 levels, 0 = highest) */
+#define configKERNEL_INTERRUPT_PRIORITY          ( 7 << (8 - 3) )  /* 0xE0 */
+#define configMAX_SYSCALL_INTERRUPT_PRIORITY     ( 5 << (8 - 3) )  /* 0xA0 */
+```
+
+  </Accordion>
+
+  <Accordion title="Assert">
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configASSERT(x)` | expression | disables interrupts and halts | Equivalent to the standard C `assert()`. Called throughout the kernel to catch programming errors. Define to an appropriate action for your build configuration. Remove (comment out) the definition entirely to disable all assertions and reduce code size in production builds. |
+
+The template provides a default that disables interrupts and loops forever, making failures visible in a debugger:
+
+```c
+#define configASSERT( x )         \
+    if( ( x ) == 0 )              \
+    {                             \
+        taskDISABLE_INTERRUPTS(); \
+        for( ; ; )                \
+        ;                         \
+    }
+```
+
+A simpler alternative for hosted environments:
+
+```c
+#include <assert.h>
+#define configASSERT( x )    assert( x )
+```
+
+  </Accordion>
+
+  <Accordion title="MPU (Memory Protection Unit)">
+
+Macros specific to the MPU-enabled Cortex-M ports (`GCC_ARM_CM3_MPU`, `GCC_ARM_CM4_MPU`, ARMv8-M TrustZone ports).
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configINCLUDE_APPLICATION_DEFINED_PRIVILEGED_FUNCTIONS` | 0 / 1 | `0` | `1` = allow application code to define functions that execute in privileged mode. Only for MPU Cortex-M ports. |
+| `configTOTAL_MPU_REGIONS` | integer | `8` | Number of MPU regions implemented on the target. Typically `8` or `16`. |
+| `configTEX_S_C_B_FLASH` | hex | `0x07UL` | TEX/S/C/B attribute bits for the MPU Flash region. Default `0x07` = TEX=000, S=1, C=1, B=1. |
+| `configTEX_S_C_B_SRAM` | hex | `0x07UL` | TEX/S/C/B attribute bits for the MPU SRAM region. |
+| `configENFORCE_SYSTEM_CALLS_FROM_KERNEL_ONLY` | 0 / 1 | `1` | `1` = prevent privilege escalation from outside the kernel. |
+| `configALLOW_UNPRIVILEGED_CRITICAL_SECTIONS` | 0 / 1 | `0` | `1` = allow unprivileged tasks to enter critical sections (mask interrupts). |
+| `configUSE_MPU_WRAPPERS_V1` | 0 / 1 | `0` | `0` = use the v2 MPU wrapper (`mpu_wrappers_v2.c`, introduced in v10.6.0). `1` = use the older v1 wrapper (`mpu_wrappers.c`). |
+| `configPROTECTED_KERNEL_OBJECT_POOL_SIZE` | integer | `10` | v2 MPU wrapper only. Maximum total number of kernel objects (tasks, queues, semaphores, mutexes, event groups, timers, stream/message buffers) in the application. |
+| `configSYSTEM_CALL_STACK_SIZE` | integer (words) | `128` | v2 MPU wrapper only. Stack size in words for the system-call stack allocated per task. |
+| `configENABLE_ACCESS_CONTROL_LIST` | 0 / 1 | `1` | v2 MPU wrapper only. `1` = enable ACL; unprivileged tasks have no access to kernel objects by default and must be granted access explicitly. |
+
+  </Accordion>
+
+  <Accordion title="ARMv8-M / TrustZone">
+
+Macros for the ARMv8-M Cortex-M23, M33, M35P, M52, M55, and M85 TrustZone-aware ports.
+
+| Macro | Type | Template default | Description |
+|-------|------|-----------------|-------------|
+| `configENABLE_TRUSTZONE` | 0 / 1 | `1` | `1` = enable TrustZone support. Non-secure FreeRTOS tasks can call Non-Secure Callable (NSC) functions exported from the secure side. |
+| `configRUN_FREERTOS_SECURE_ONLY` | 0 / 1 | `1` | `1` = run the entire application (including the scheduler) on the secure side without ever branching to the non-secure side. Use together with `configENABLE_TRUSTZONE 0`. |
+| `configENABLE_MPU` | 0 / 1 | `1` | `1` = enable the Memory Protection Unit. |
+| `configENABLE_FPU` | 0 / 1 | `1` | `1` = enable the Floating Point Unit. |
+| `configENABLE_MVE` | 0 / 1 | `1` | `1` = enable M-Profile Vector Extension (Helium). Only valid for Cortex-M52, M55, M85, and STAR-MC3. Must be `0` or undefined for M23, M33, M35P. |
+| `secureconfigMAX_SECURE_CONTEXTS` | integer | `5` | Maximum number of tasks that can call into the secure side of an ARMv8-M device. |
+| `configCHECK_HANDLER_INSTALLATION` | 0 / 1 | `1` | `1` = assert that `vPortSVCHandler` and `xPortPendSVHandler` are correctly installed as the SVC and PendSV interrupt handlers. Set to `0` when using indirect routing. |
+| `configENABLE_PAC` | 0 / 1 | `0` (default) | `1` = enable Pointer Authentication Code support (ARMv8.1-M). |
+| `configENABLE_BTI` | 0 / 1 | `0` (default) | `1` = enable Branch Target Identification support (ARMv8.1-M). |
+
+  </Accordion>
+
+</AccordionGroup>
+
+## Minimal working example
+
+The following `FreeRTOSConfig.h` is the smallest configuration that will compile for a Cortex-M4F target with heap_4 and software timers enabled:
+
+```c
+#ifndef FREERTOS_CONFIG_H
+#define FREERTOS_CONFIG_H
+
+/* Hardware */
+#define configCPU_CLOCK_HZ              168000000UL
+
+/* Scheduling */
+#define configTICK_RATE_HZ              1000
+#define configUSE_PREEMPTION            1
+#define configUSE_TIME_SLICING          1
+#define configMAX_PRIORITIES            5
+#define configIDLE_SHOULD_YIELD         1
+#define configTICK_TYPE_WIDTH_IN_BITS   TICK_TYPE_WIDTH_32_BITS
+
+/* Tasks */
+#define configMINIMAL_STACK_SIZE        128
+#define configMAX_TASK_NAME_LEN         16
+
+/* Memory */
+#define configSUPPORT_STATIC_ALLOCATION  0
+#define configSUPPORT_DYNAMIC_ALLOCATION 1
+#define configTOTAL_HEAP_SIZE            ( 32 * 1024 )
+
+/* Hooks */
+#define configUSE_IDLE_HOOK             0
+#define configUSE_TICK_HOOK             0
+#define configUSE_MALLOC_FAILED_HOOK    0
+#define configCHECK_FOR_STACK_OVERFLOW  0
+
+/* Interrupts (Cortex-M4, 4 priority bits) */
+#define configKERNEL_INTERRUPT_PRIORITY         ( 15 << 4 )
+#define configMAX_SYSCALL_INTERRUPT_PRIORITY    ( 5 << 4 )
+
+/* Features */
+#define configUSE_MUTEXES               1
+#define configUSE_RECURSIVE_MUTEXES     0
+#define configUSE_COUNTING_SEMAPHORES   1
+#define configUSE_TASK_NOTIFICATIONS    1
+#define configTASK_NOTIFICATION_ARRAY_ENTRIES 1
+#define configUSE_TIMERS                1
+#define configTIMER_TASK_PRIORITY       ( configMAX_PRIORITIES - 1 )
+#define configTIMER_TASK_STACK_DEPTH    configMINIMAL_STACK_SIZE
+#define configTIMER_QUEUE_LENGTH        10
+
+/* Stats / trace */
+#define configGENERATE_RUN_TIME_STATS   0
+#define configUSE_TRACE_FACILITY        0
+#define configUSE_STATS_FORMATTING_FUNCTIONS 0
+
+/* Assert */
+#define configASSERT( x )  if( ( x ) == 0 ) { taskDISABLE_INTERRUPTS(); for(;;); }
+
+/* API includes */
+#define INCLUDE_vTaskPrioritySet        1
+#define INCLUDE_vTaskDelete             1
+#define INCLUDE_vTaskSuspend            1
+#define INCLUDE_vTaskDelay              1
+#define INCLUDE_xTaskDelayUntil         1
+#define INCLUDE_xTaskGetCurrentTaskHandle 1
+
+#endif /* FREERTOS_CONFIG_H */
+```

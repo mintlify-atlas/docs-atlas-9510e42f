@@ -1,0 +1,123 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "FreeRTOS Kernel",
+  "projectDescription": "A real-time operating system kernel for microcontrollers and small microprocessors, providing preemptive multitasking, inter-task communication, and memory management for embedded systems.",
+  "theme": "aspen",
+  "primaryColor": "#67c253",
+  "lightColor": "#f2f9ed",
+  "darkColor": "#0e100f",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "configuration"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/tasks",
+              "concepts/scheduling",
+              "concepts/memory-management"
+            ]
+          },
+          {
+            "group": "Inter-Task Communication",
+            "pages": [
+              "communication/queues",
+              "communication/semaphores",
+              "communication/event-groups",
+              "communication/stream-buffers"
+            ]
+          },
+          {
+            "group": "Timers & Interrupts",
+            "pages": [
+              "timers/software-timers",
+              "timers/interrupt-handling"
+            ]
+          },
+          {
+            "group": "Porting & Integration",
+            "pages": [
+              "porting/overview",
+              "porting/cmake-integration",
+              "porting/freertosconfig"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Task API",
+            "pages": [
+              "api/task-creation",
+              "api/task-control",
+              "api/task-utilities"
+            ]
+          },
+          {
+            "group": "Synchronization API",
+            "pages": [
+              "api/queues",
+              "api/semaphores",
+              "api/event-groups",
+              "api/stream-buffers"
+            ]
+          },
+          {
+            "group": "Timer & System API",
+            "pages": [
+              "api/timers",
+              "api/kernel-control"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Preemptive and cooperative multitasking scheduler",
+    "Priority-based task scheduling with time slicing",
+    "Multiple heap memory management implementations (heap_1 through heap_5)",
+    "Queues, semaphores, and mutexes for inter-task communication",
+    "Software timers with one-shot and auto-reload modes",
+    "Event groups for synchronizing multiple tasks",
+    "Stream buffers and message buffers for continuous data transfer",
+    "Direct-to-task notifications for lightweight signaling",
+    "Memory Protection Unit (MPU) support",
+    "Symmetric Multiprocessing (SMP) support for multi-core targets",
+    "Wide architecture support: ARM Cortex-M/R/A, RISC-V, AVR, PPC, x86 and more",
+    "CMake FetchContent and git submodule integration"
+  ],
+  "publicApiSurface": [
+    "xTaskCreate() / xTaskCreateStatic()",
+    "vTaskDelete()",
+    "vTaskDelay() / xTaskDelayUntil()",
+    "vTaskSuspend() / vTaskResume()",
+    "xTaskGetCurrentTaskHandle()",
+    "uxTaskPriorityGet() / vTaskPrioritySet()",
+    "xQueueCreate() / xQueueCreateStatic()",
+    "xQueueSend() / xQueueReceive()",
+    "xQueueSendFromISR() / xQueueReceiveFromISR()",
+    "xSemaphoreCreateBinary() / xSemaphoreCreateMutex()",
+    "xSemaphoreTake() / xSemaphoreGive()",
+    "xSemaphoreTakeFromISR() / xSemaphoreGiveFromISR()",
+    "xTimerCreate() / xTimerStart() / xTimerStop()",
+    "xEventGroupCreate() / xEventGroupSetBits() / xEventGroupWaitBits()",
+    "xStreamBufferCreate() / xStreamBufferSend() / xStreamBufferReceive()",
+    "xMessageBufferCreate() / xMessageBufferSend() / xMessageBufferReceive()",
+    "xTaskNotify() / xTaskNotifyWait() / xTaskNotifyFromISR()",
+    "vTaskStartScheduler() / vTaskEndScheduler()",
+    "taskENTER_CRITICAL() / taskEXIT_CRITICAL()",
+    "portDISABLE_INTERRUPTS() / portENABLE_INTERRUPTS()"
+  ]
+}

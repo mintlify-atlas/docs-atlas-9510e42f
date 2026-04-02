@@ -1,0 +1,303 @@
+---
+title: "Scheduling"
+description: "How the FreeRTOS scheduler works: preemption, time slicing, priorities, and SMP"
+---
+
+The FreeRTOS scheduler decides which task runs at any given instant. It operates on a simple rule: **always run the highest-priority task that is in the Ready state**. Understanding the scheduler's behaviour and the configuration options that control it lets you reason about task timing and response latency.
+
+## Preemptive vs cooperative scheduling
+
+The `configUSE_PREEMPTION` constant in `FreeRTOSConfig.h` selects between two scheduling modes.
+
+<Tabs>
+  <Tab title="Preemptive (configUSE_PREEMPTION = 1)">
+    The scheduler can switch tasks at any tick interrupt or whenever a higher-priority task becomes ready. A lower-priority task can be interrupted mid-execution without calling any yield API. This is the default and the recommended mode for most applications.
+
+    ```c
+    /* FreeRTOSConfig.h */
+    #define configUSE_PREEMPTION    1
+    ```
+
+    ```c
+    /* With preemption enabled, vHighTask immediately displaces vLowTask
+     * as soon as it enters the Ready state (e.g. after its delay expires). */
+    void vLowTask( void * pvParameters )
+    {
+        for( ;; )
+        {
+            /* This task will be preempted by vHighTask whenever vHighTask
+             * is ready to run. No explicit yield is needed. */
+            doBackgroundWork();
+        }
+    }
+
+    void vHighTask( void * pvParameters )
+    {
+        for( ;; )
+        {
+            doTimeCriticalWork();
+            vTaskDelay( pdMS_TO_TICKS( 20 ) );
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="Cooperative (configUSE_PREEMPTION = 0)">
+    The scheduler only switches tasks when the running task explicitly yields by calling `taskYIELD()`, blocks on an API call, or completes. No task switch occurs at the tick interrupt alone. This mode is simpler to reason about but requires every task to cooperate.
+
+    ```c
+    /* FreeRTOSConfig.h */
+    #define configUSE_PREEMPTION    0
+    ```
+
+    ```c
+    /* With cooperative scheduling, a task must explicitly yield to allow
+     * other tasks to run. */
+    void vTask1( void * pvParameters )
+    {
+        for( ;; )
+        {
+            doWork();
+
+            /* Yield to allow other tasks of the same or lower priority
+             * to run. */
+            taskYIELD();
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Fixed-priority preemptive scheduling
+
+Under preemptive scheduling, the scheduler enforces a strict priority ordering:
+
+1. At every tick interrupt, the scheduler checks whether a higher-priority task has become Ready.
+2. If a higher-priority task is ready, the current task is preempted immediately.
+3. If multiple tasks share the highest Ready priority, time slicing determines which one runs (see below).
+
+The result is that a lower-priority task never runs while a higher-priority task is ready. This makes response latency predictable: a high-priority task will preempt lower-priority tasks within one tick period at most.
+
+## Time slicing
+
+When `configUSE_TIME_SLICING` is set to `1`, tasks of equal priority share the CPU in a round-robin fashion — the scheduler switches between them on every tick interrupt.
+
+```c
+/* FreeRTOSConfig.h */
+#define configUSE_TIME_SLICING    1   /* Round-robin among equal-priority tasks. */
+                                      /* Default is 0 in the template config. */
+```
+
+When `configUSE_TIME_SLICING` is `0` (the default in the template configuration), equal-priority tasks are not switched unless the running task blocks or yields voluntarily.
+
+## The tick interrupt
+
+The FreeRTOS tick is a periodic interrupt that drives the passage of time. Its frequency is set by `configTICK_RATE_HZ`:
+
+```c
+/* FreeRTOSConfig.h */
+#define configTICK_RATE_HZ    100   /* 100 Hz tick = 10 ms tick period. */
+```
+
+All timeout values are expressed in ticks. The macro `pdMS_TO_TICKS()` converts milliseconds to ticks:
+
+```c
+/* Block for 500 ms regardless of the tick rate. */
+vTaskDelay( pdMS_TO_TICKS( 500 ) );
+```
+
+A higher tick rate gives finer timing resolution but increases interrupt overhead. A rate of 100–1000 Hz is typical.
+
+## vTaskDelay() vs xTaskDelayUntil()
+
+`vTaskDelay()` blocks for a duration relative to the moment it is called:
+
+```c
+void vTaskDelay( const TickType_t xTicksToDelay );
+```
+
+`xTaskDelayUntil()` blocks until an **absolute** wake time, making it suitable for periodic tasks where jitter must be minimised:
+
+```c
+BaseType_t xTaskDelayUntil( TickType_t * const pxPreviousWakeTime,
+                            const TickType_t xTimeIncrement );
+```
+
+The difference matters when the task body takes variable time to execute. `vTaskDelay()` produces a period of `execution_time + delay`, while `xTaskDelayUntil()` produces a constant period regardless of execution time.
+
+### Periodic task using xTaskDelayUntil()
+
+```c
+/* Perform an action every 10 ticks. */
+void vTaskFunction( void * pvParameters )
+{
+    TickType_t xLastWakeTime;
+    const TickType_t xFrequency = pdMS_TO_TICKS( 100 ); /* 100 ms period. */
+    BaseType_t xWasDelayed;
+
+    /* Initialise xLastWakeTime with the current time. */
+    xLastWakeTime = xTaskGetTickCount();
+
+    for( ;; )
+    {
+        /* Wait for the next cycle. xWasDelayed is pdFALSE if the wake time
+         * was already in the past — a sign the task missed its deadline. */
+        xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );
+
+        /* Perform the periodic action. */
+        doPeriodicWork();
+    }
+}
+```
+
+## Starting the scheduler
+
+`vTaskStartScheduler()` starts tick processing and hands control to the kernel. After this call, the scheduler runs the highest-priority ready task and does not return unless insufficient heap memory is available to create the idle task or the timer task.
+
+```c
+void vTaskStartScheduler( void );
+```
+
+```c
+int main( void )
+{
+    /* Create at least one task before starting the scheduler. */
+    xTaskCreate( vMyTask, "Task", 128, NULL, tskIDLE_PRIORITY + 1, NULL );
+
+    /* Start the scheduler — does not return under normal circumstances. */
+    vTaskStartScheduler();
+
+    /* Execution reaches here only if heap memory was insufficient. */
+    for( ;; );
+}
+```
+
+The scheduler state can be queried with `xTaskGetSchedulerState()`, which returns one of:
+
+| Return value | Meaning |
+|---|---|
+| `taskSCHEDULER_NOT_STARTED` | `vTaskStartScheduler()` has not been called. |
+| `taskSCHEDULER_RUNNING` | The scheduler is running normally. |
+| `taskSCHEDULER_SUSPENDED` | `vTaskSuspendAll()` has been called. |
+
+## Critical sections
+
+A critical section prevents the scheduler from performing a context switch and disables interrupts up to `configMAX_SYSCALL_INTERRUPT_PRIORITY`. Use them to protect shared data accessed from both tasks and ISRs.
+
+```c
+taskENTER_CRITICAL();
+{
+    /* Access shared data here. Interrupts are disabled.
+     * Keep this region as short as possible. */
+    sharedVariable++;
+}
+taskEXIT_CRITICAL();
+```
+
+Critical sections can be nested. The scheduler re-enables interrupts only when the nesting count returns to zero.
+
+From an ISR, use the `_FROM_ISR` variants which save and restore the interrupt mask:
+
+```c
+UBaseType_t uxSavedInterruptStatus;
+
+uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
+{
+    sharedVariable++;
+}
+taskEXIT_CRITICAL_FROM_ISR( uxSavedInterruptStatus );
+```
+
+## Suspending the scheduler
+
+`vTaskSuspendAll()` prevents context switches without disabling interrupts. This is preferable to a critical section when you need uninterrupted task execution but still need interrupts to be serviced (e.g. to maintain the tick count).
+
+```c
+void vTaskSuspendAll( void );
+BaseType_t xTaskResumeAll( void );
+```
+
+```c
+/* Prevent context switches during a long non-blocking operation. */
+vTaskSuspendAll();
+{
+    /* Interrupts still fire and the tick count is maintained.
+     * Do NOT call any FreeRTOS API that could cause a context switch here
+     * (e.g. xQueueSend, vTaskDelay). */
+    performLongOperation();
+}
+xTaskResumeAll();
+```
+
+## SMP: configNUMBER_OF_CORES > 1
+
+FreeRTOS supports symmetric multiprocessing (SMP). Set `configNUMBER_OF_CORES` to the number of available cores:
+
+```c
+/* FreeRTOSConfig.h */
+#define configNUMBER_OF_CORES    2
+```
+
+With SMP, the scheduler runs tasks on multiple cores simultaneously. The same priority rules apply — each core runs the highest-priority ready task not already running on another core.
+
+Two additional options control SMP behaviour:
+
+```c
+/* Allow tasks of different priorities to run simultaneously on different cores.
+ * Set to 0 to maintain the invariant that lower-priority tasks never run
+ * when higher-priority tasks are ready. */
+#define configRUN_MULTIPLE_PRIORITIES    0
+
+/* Enable per-task core affinity masks. */
+#define configUSE_CORE_AFFINITY          0
+```
+
+When `configUSE_CORE_AFFINITY` is enabled, `vTaskCoreAffinitySet()` pins a task to specific cores:
+
+```c
+/* Pin a task to core 0 only. */
+UBaseType_t uxCoreAffinityMask = ( 1 << 0 );
+vTaskCoreAffinitySet( xHandle, uxCoreAffinityMask );
+```
+
+## Priority inversion and mutexes
+
+Priority inversion occurs when a high-priority task is blocked waiting for a resource held by a low-priority task, while a medium-priority task runs instead of the low-priority task — preventing it from releasing the resource.
+
+FreeRTOS mutexes (`xSemaphoreCreateMutex()`) implement **priority inheritance** to mitigate this. When a high-priority task blocks on a mutex held by a lower-priority task, the holder's priority is temporarily raised to match the waiter's. This allows the holder to run and release the mutex quickly.
+
+```c
+/* FreeRTOSConfig.h */
+#define configUSE_MUTEXES    1
+```
+
+Priority inheritance is a mitigation, not a complete solution. Design your system to minimise the time mutexes are held, and avoid holding mutexes across blocking calls.
+
+## Key scheduling configuration options
+
+The following options in `FreeRTOSConfig.h` control scheduler behaviour:
+
+```c
+/* Scheduling mode: 1 = preemptive, 0 = cooperative. */
+#define configUSE_PREEMPTION                    1
+
+/* Round-robin among equal-priority tasks on every tick. */
+#define configUSE_TIME_SLICING                  0
+
+/* Tick interrupt frequency in Hz. */
+#define configTICK_RATE_HZ                      100
+
+/* Number of task priority levels. Valid range: 0 to configMAX_PRIORITIES-1. */
+#define configMAX_PRIORITIES                    5
+
+/* Number of processor cores (default 1). */
+/* #define configNUMBER_OF_CORES                [Num of available cores] */
+
+/* Run tasks of different priorities simultaneously on different cores. */
+#define configRUN_MULTIPLE_PRIORITIES           0
+
+/* Enable low-power tickless idle mode. */
+#define configUSE_TICKLESS_IDLE                 0
+
+/* Use hardware CLZ instruction for faster task selection (port-specific). */
+#define configUSE_PORT_OPTIMISED_TASK_SELECTION 0
+```

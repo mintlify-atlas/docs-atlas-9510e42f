@@ -1,0 +1,155 @@
+---
+title: "Porting Overview"
+description: "Supported architectures and how to select the right port for your hardware"
+---
+
+The FreeRTOS kernel is separated into a hardware-independent core and a set of platform-specific **ports**. A port provides the context-switch mechanism, interrupt handling, and type definitions that the kernel needs to run on a particular CPU and toolchain combination.
+
+<Warning>
+If your SDK or BSP already ships a FreeRTOS port (common with Espressif ESP-IDF, Raspberry Pi Pico SDK, and vendor Cortex-M SDKs), use that port rather than pulling one directly from this repository. Vendor ports are tuned to their specific clock and interrupt controller configurations.
+</Warning>
+
+## Directory structure
+
+All ports live under `portable/`. The first level of subdirectories identifies the **compiler toolchain**; the second level identifies the **target architecture**.
+
+```
+portable/
+├── GCC/           # GNU/Clang toolchain ports (largest collection)
+├── IAR/           # IAR Embedded Workbench ports
+├── RVDS/          # ARM RealView Development Suite
+├── Keil/          # Keil MDK (ARMCC)
+├── CCS/           # TI Code Composer Studio
+├── MSVC-MingW/    # Windows simulation (x86, MSVC or MinGW)
+├── ARMClang/      # Arm Compiler 6 (clang-based)
+├── Renesas/       # Renesas CC-RX / e2 studio
+├── MPLAB/         # Microchip MPLAB XC (PIC)
+├── MemMang/       # Heap implementations heap_1.c … heap_5.c
+├── Common/        # Shared utility code used by some ports
+└── template/      # Skeleton port for new platform bring-up
+```
+
+Each architecture subdirectory contains exactly two files:
+
+| File | Purpose |
+|------|---------|
+| `portmacro.h` | Type definitions (`StackType_t`, `BaseType_t`), critical-section macros (`portENTER_CRITICAL`, `portEXIT_CRITICAL`), yield macro (`portYIELD`), byte alignment, stack growth direction |
+| `port.c` | Context-switch implementation, tick interrupt handler, and any required assembly stubs |
+
+Some ports add a `portasm.s` or `portASM.S` assembly file alongside `port.c` when the context switch cannot be expressed in C.
+
+## Selecting a port
+
+### With CMake (recommended)
+
+Set the `FREERTOS_PORT` CMake cache variable to the port string that matches your compiler and target. The variable must be set **before** `FetchContent_MakeAvailable` or `add_subdirectory` is called.
+
+```cmake
+set(FREERTOS_PORT "GCC_ARM_CM4F" CACHE STRING "" FORCE)
+```
+
+The port string combines the toolchain prefix and architecture name:
+
+```
+<COMPILER>_<ARCHITECTURE>
+```
+
+For example: `GCC_ARM_CM4F`, `IAR_ARM_CM33_NONSECURE`, `MSVC_MINGW`.
+
+### Without CMake
+
+Add the two port files directly to your build system:
+
+```
+portable/<Compiler>/<Architecture>/portmacro.h   (include directory)
+portable/<Compiler>/<Architecture>/port.c         (source file)
+portable/MemMang/heap_4.c                         (or another heap)
+```
+
+Ensure the directory containing `portmacro.h` is on your compiler's include path so that `portable.h` can find it.
+
+## Architecture families
+
+<CardGroup cols={2}>
+  <Card title="ARM Cortex-M (standard)" icon="microchip">
+    M0, M3, M4F, M7, M23, M33, M35P, M52, M55, M85. The most common FreeRTOS targets. Cortex-M3 and later use the SysTick timer for the kernel tick and PendSV for context switching.
+  </Card>
+  <Card title="ARM Cortex-M (MPU)" icon="shield">
+    M3 MPU, M4 MPU, M23/M33/M35P TrustZone-aware variants. Run tasks in unprivileged mode; privileged kernel code is isolated by the Memory Protection Unit.
+  </Card>
+  <Card title="ARM Cortex-A/R" icon="server">
+    CA5, CA9, CA53 (64-bit), AARCH64, CR5, CR82, CRx MPU. Typically used on application processors and automotive-grade safety MCUs. The A-profile ports manage the GIC (Generic Interrupt Controller).
+  </Card>
+  <Card title="RISC-V" icon="cpu">
+    Generic RISC-V port under `GCC/RISC-V/` and `IAR/RISC-V/`. A `FREERTOS_RISCV_EXTENSION` variant supports custom ISA extensions. Also includes Pulpino Vega RV32M1RM.
+  </Card>
+  <Card title="AVR" icon="bolt">
+    ATMega323, AVR_AVRDx (modern AVR DA/DB/DD/DU/EA), and AVR_Mega0 (ATmega4808/4809 family). Available for both GCC and IAR toolchains.
+  </Card>
+  <Card title="x86 / Host simulation" icon="desktop">
+    `GCC_POSIX` runs FreeRTOS as a POSIX process on Linux/macOS using `pthread` and signals. `MSVC_MINGW` targets Windows. Useful for unit testing and algorithm development without hardware.
+  </Card>
+  <Card title="Renesas RX / RL78" icon="chip">
+    RX100, RX200, RX600, RX600v2, RX700v3 (with DPFPU), RL78. Available for GCC, IAR, and the Renesas CC-RX toolchain.
+  </Card>
+  <Card title="FPGA soft-cores" icon="grid">
+    MicroBlaze (V7, V8, V9), NiosII, PPC405 Xilinx, PPC440 Xilinx. Target softcore processors instantiated in Xilinx and Intel FPGAs.
+  </Card>
+</CardGroup>
+
+## Common port reference
+
+The table below lists the most frequently used GCC ports and their `FREERTOS_PORT` CMake values.
+
+| CMake port value | Directory | Target hardware |
+|---|---|---|
+| `GCC_ARM_CM0` | `GCC/ARM_CM0` | Cortex-M0 / M0+ (e.g. STM32G0, RP2040 core 0) |
+| `GCC_ARM_CM3` | `GCC/ARM_CM3` | Cortex-M3 (e.g. STM32F1) |
+| `GCC_ARM_CM3_MPU` | `GCC/ARM_CM3_MPU` | Cortex-M3 with MPU |
+| `GCC_ARM_CM4F` | `GCC/ARM_CM4F` | Cortex-M4 with FPU (e.g. STM32F4, STM32F7-M4) |
+| `GCC_ARM_CM4_MPU` | `GCC/ARM_CM4_MPU` | Cortex-M4 with MPU |
+| `GCC_ARM_CM7` | `GCC/ARM_CM7` | Cortex-M7 (e.g. STM32H7, iMXRT) |
+| `GCC_ARM_CM23_NTZ_NONSECURE` | `GCC/ARM_CM23_NTZ` | Cortex-M23 (no TrustZone) |
+| `GCC_ARM_CM33_NONSECURE` | `GCC/ARM_CM33` | Cortex-M33 non-secure world (e.g. STM32L5) |
+| `GCC_ARM_CM33_NTZ_NONSECURE` | `GCC/ARM_CM33_NTZ` | Cortex-M33 (no TrustZone) |
+| `GCC_ARM_CM55_NONSECURE` | `GCC/ARM_CM55` | Cortex-M55 non-secure (Helium/MVE) |
+| `GCC_ARM_CM85_NONSECURE` | `GCC/ARM_CM85` | Cortex-M85 non-secure (Helium/MVE) |
+| `GCC_ARM_CA9` | `GCC/ARM_CA9` | Cortex-A9 (e.g. Xilinx Zynq-7000) |
+| `GCC_ARM_AARCH64` | `GCC/ARM_AARCH64` | Cortex-A53/A55/A72 64-bit |
+| `GCC_ARM_CA53_64_BIT` | `GCC/ARM_CA53_64_BIT` | Cortex-A53 64-bit |
+| `GCC_RISC_V` | `GCC/RISC-V` | Generic RISC-V RV32 / RV64 |
+| `GCC_RISC_V_GENERIC` | `GCC/RISC-V` | RISC-V with `FREERTOS_RISCV_EXTENSION` |
+| `GCC_RP2040` | ThirdParty | Raspberry Pi RP2040 (Cortex-M0+) |
+| `GCC_POSIX` | ThirdParty | Linux / macOS POSIX simulation |
+| `MSVC_MINGW` | `MSVC-MingW` | Windows simulation |
+| `GCC_ATMEGA` | `GCC/ATMega323` | Microchip ATmega (8-bit AVR) |
+| `GCC_AVRDX` | `GCC/AVR_AVRDx` | AVR DA/DB/DD/EA series |
+| `GCC_MICROBLAZE_V9` | `GCC/MicroBlazeV9` | MicroBlaze V9 softcore |
+| `GCC_NIOSII` | `GCC/NiosII` | Intel/Altera Nios II softcore |
+| `GCC_PPC405_XILINX` | `GCC/PPC405_Xilinx` | Xilinx PPC405 softcore |
+
+For IAR variants, replace `GCC_` with `IAR_` (e.g. `IAR_ARM_CM4F`). The full list of all port strings is printed by CMake when `FREERTOS_PORT` is not set.
+
+## Memory management (MemMang)
+
+The `portable/MemMang/` directory contains five heap implementations. Choose one and add it to your build alongside the port files.
+
+| File | Strategy | Notes |
+|------|----------|-------|
+| `heap_1.c` | Simple bump allocator, no free | Suitable when tasks are never deleted |
+| `heap_2.c` | Best-fit, allows free, no coalescence | Fragments over time; prefer heap_4 |
+| `heap_3.c` | Wraps standard `malloc`/`free` | Thread-safety provided by suspending scheduler |
+| `heap_4.c` | Best-fit with coalescence | Recommended general-purpose choice |
+| `heap_5.c` | Like heap_4 but spans multiple memory regions | Use when RAM is non-contiguous |
+
+A custom heap can be provided by pointing `FREERTOS_HEAP` at a `.c` file path instead of a number (see [CMake integration](/porting/cmake-integration)).
+
+## Creating a new port
+
+Start from `portable/template/`. It contains a minimal `portmacro.h` with all required type and macro definitions, and a stub `port.c`. The template compiles cleanly and is the port used by the `cmake_example` project in `examples/cmake_example/`.
+
+The minimum a port must implement:
+
+- **`portmacro.h`** — `StackType_t`, `BaseType_t`, `UBaseType_t`, `portSTACK_GROWTH`, `portBYTE_ALIGNMENT`, `portENTER_CRITICAL`, `portEXIT_CRITICAL`, `portDISABLE_INTERRUPTS`, `portENABLE_INTERRUPTS`, `portYIELD`, `portTASK_FUNCTION`
+- **`port.c`** — `pxPortInitialiseStack()`, `xPortStartScheduler()`, `vPortEndScheduler()`, tick interrupt handler
+- **`portasm.s`** (if needed) — context save/restore, `vPortYield` trampoline

@@ -1,0 +1,285 @@
+---
+title: "Interrupt Handling"
+description: "Writing ISRs that interact safely with FreeRTOS tasks using FromISR APIs and deferred interrupt processing"
+---
+
+FreeRTOS provides two categories of API functions for every synchronisation primitive: task-level functions that may block, and interrupt-safe `FromISR` variants that never block and are the only FreeRTOS functions permitted to be called from an ISR.
+
+Using the wrong variant — calling a task-level function from an ISR — causes undefined behaviour and will typically result in a hard fault or corrupted kernel state.
+
+## The two API categories
+
+| Category | Example | May block? | Call from ISR? |
+|---|---|---|---|
+| Task-level | `xSemaphoreGive()` | Yes | No |
+| ISR-safe | `xSemaphoreGiveFromISR()` | Never | Yes |
+
+The ISR-safe functions are identifiable by the `FromISR` suffix. They communicate with blocked tasks by writing to internal kernel structures and optionally requesting a context switch at ISR exit.
+
+## The `xHigherPriorityTaskWoken` pattern
+
+Every `FromISR` function accepts a pointer to a `BaseType_t` variable. When the function unblocks a task whose priority is higher than the interrupted task, it sets that variable to `pdTRUE`. After the ISR completes its work, pass the variable to `portYIELD_FROM_ISR()`, which requests a context switch only when needed.
+
+```c
+void vMyISR( void )
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    /* ... acknowledge hardware interrupt ... */
+
+    /* Give the semaphore to unblock a waiting task */
+    xSemaphoreGiveFromISR( xMySemaphore, &xHigherPriorityTaskWoken );
+
+    /* Request a context switch if a higher-priority task was unblocked.
+     * If xHigherPriorityTaskWoken is pdFALSE, this is a no-op. */
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+```
+
+Always initialise `xHigherPriorityTaskWoken` to `pdFALSE` before the first `FromISR` call. When multiple `FromISR` calls appear in the same ISR, pass the same variable to all of them — any one of them may set it to `pdTRUE`.
+
+<Warning>
+On ARM Cortex-M devices, only interrupts whose numeric priority value is **numerically greater than or equal to** `configMAX_SYSCALL_INTERRUPT_PRIORITY` (i.e., equal or lower urgency) may call FreeRTOS APIs. Interrupts with a numerically lower value (higher urgency) must never call any FreeRTOS function. Violating this rule is the most common source of hard faults in Cortex-M applications using FreeRTOS.
+
+Cortex-M interrupt priority registers store values in the most-significant bits of each byte. Use `configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY` to express the priority in the library's notation and let the port shift it correctly.
+</Warning>
+
+## Interrupt priority configuration (Cortex-M)
+
+```c FreeRTOSConfig.h
+/* Kernel interrupt priority — SysTick and PendSV run at this level.
+ * On Cortex-M, set to the lowest urgency (highest numeric value). */
+#define configKERNEL_INTERRUPT_PRIORITY          0
+
+/* No FreeRTOS API call (FromISR or otherwise) may be made from an interrupt
+ * whose priority is numerically lower (higher urgency) than this value.
+ * Interrupts above this level are never masked by FreeRTOS and will always
+ * preempt the kernel — they must not touch any FreeRTOS object. */
+#define configMAX_SYSCALL_INTERRUPT_PRIORITY     0
+
+/* Some ports expose the library-notation equivalent: */
+#define configMAX_API_CALL_INTERRUPT_PRIORITY    0
+```
+
+<Tabs>
+  <Tab title="ARM Cortex-M">
+    On Cortex-M3/M4/M7, NVIC priorities are configured per interrupt in the NVIC priority registers. A smaller numeric value means a higher-urgency interrupt.
+
+    ```c
+    /* Assign an interrupt a priority that permits FreeRTOS API calls.
+     * configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY is defined in
+     * FreeRTOSConfig.h as the threshold value in library notation.
+     *
+     * Example: if configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY is 5,
+     * the UART ISR below runs at priority 5 and may call FromISR APIs.
+     * An ISR at priority 4 would be above the threshold and must NOT
+     * call any FreeRTOS function. */
+    NVIC_SetPriority( UART0_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY );
+    NVIC_EnableIRQ( UART0_IRQn );
+
+    void UART0_IRQHandler( void )
+    {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        uint8_t ucByte;
+
+        /* Read byte from hardware FIFO */
+        ucByte = UART0->DR;
+
+        /* Send to queue — safe because priority is at or below the threshold */
+        xQueueSendFromISR( xRxQueue, &ucByte, &xHigherPriorityTaskWoken );
+
+        portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+    }
+    ```
+  </Tab>
+  <Tab title="Generic (non-Cortex-M)">
+    On other architectures, the mechanism to assign interrupt priorities is port-specific. The key constraint is the same: any ISR that calls a FreeRTOS `FromISR` function must run at or below the priority level defined by `configMAX_SYSCALL_INTERRUPT_PRIORITY`.
+
+    ```c
+    void vMyGenericISR( void )
+    {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+        /* Acknowledge the hardware source */
+        vClearInterruptFlag();
+
+        /* Use a task notification to signal the handler task */
+        vTaskNotifyGiveFromISR( xHandlerTask, &xHigherPriorityTaskWoken );
+
+        portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## ISR-safe queue and semaphore APIs
+
+### Queue
+
+```c
+/* Post an item to the back of a queue from an ISR.
+ * Returns pdPASS on success, errQUEUE_FULL if the queue is full. */
+BaseType_t xQueueSendFromISR(
+    QueueHandle_t xQueue,
+    const void *  pvItemToQueue,
+    BaseType_t *  pxHigherPriorityTaskWoken );
+
+/* Receive an item from a queue from an ISR. */
+BaseType_t xQueueReceiveFromISR(
+    QueueHandle_t xQueue,
+    void *        pvBuffer,
+    BaseType_t *  pxHigherPriorityTaskWoken );
+```
+
+### Semaphore
+
+```c
+/* Give a binary or counting semaphore from an ISR.
+ * Defined in semphr.h; expands to xQueueGiveFromISR(). */
+#define xSemaphoreGiveFromISR( xSemaphore, pxHigherPriorityTaskWoken ) \
+    xQueueGiveFromISR( ( QueueHandle_t )( xSemaphore ), \
+                       ( pxHigherPriorityTaskWoken ) )
+```
+
+Mutex-type semaphores (created with `xSemaphoreCreateMutex()`) must not be given from an ISR because they use priority inheritance, which requires task context.
+
+## Task notifications from ISRs
+
+Task notifications are the most efficient ISR-to-task signalling mechanism. They require no additional kernel object and are faster than semaphores.
+
+<Tip>
+Prefer `vTaskNotifyGiveFromISR()` over a semaphore when a single task needs to be unblocked by a single ISR. It avoids the overhead of a queue-backed semaphore entirely.
+</Tip>
+
+```c
+/* Increment the target task's notification value.
+ * The task calls ulTaskNotifyTake() to wait for the count to become non-zero. */
+void vTaskNotifyGiveFromISR(
+    TaskHandle_t xTaskToNotify,
+    BaseType_t * pxHigherPriorityTaskWoken );
+
+/* Send a notification with a value and action (eSetBits, eIncrement, etc.). */
+BaseType_t xTaskNotifyFromISR(
+    TaskHandle_t    xTaskToNotify,
+    uint32_t        ulValue,
+    eNotifyAction   eAction,
+    BaseType_t *    pxHigherPriorityTaskWoken );
+```
+
+## ISR-safe critical sections (SMP)
+
+On multi-core systems, use the `FromISR` critical section macros to protect data shared between ISRs and tasks without disabling all interrupts system-wide:
+
+```c
+/* Returns a value that must be passed to the matching exit macro */
+UBaseType_t uxSavedStatus = taskENTER_CRITICAL_FROM_ISR();
+
+/* --- protected access to shared data --- */
+
+taskEXIT_CRITICAL_FROM_ISR( uxSavedStatus );
+```
+
+On single-core builds these expand to `portSET_INTERRUPT_MASK_FROM_ISR()` and `portCLEAR_INTERRUPT_MASK_FROM_ISR()` respectively. Always pair every enter with its matching exit, and never call blocking APIs inside the critical section.
+
+## Deferred interrupt processing pattern
+
+ISRs should execute as quickly as possible. For anything beyond acknowledging the hardware and signalling a task, defer the processing:
+
+1. The ISR acknowledges the hardware and posts to a queue or semaphore.
+2. A dedicated handler task blocks waiting for that signal.
+3. The task performs the actual work with full access to blocking APIs, file systems, and other resources that cannot be used inside an ISR.
+
+### Example: GPIO interrupt giving a semaphore
+
+```c
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+
+static SemaphoreHandle_t xGpioSemaphore;
+static TaskHandle_t xGpioHandlerTask;
+
+/* ISR — runs when the GPIO pin fires */
+void GPIO0_IRQHandler( void )
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    /* Clear the interrupt flag in hardware */
+    GPIO->ICR = GPIO_PIN_0;
+
+    /* Signal the handler task */
+    xSemaphoreGiveFromISR( xGpioSemaphore, &xHigherPriorityTaskWoken );
+
+    /* Yield to the handler task immediately if it has higher priority */
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+
+/* Handler task — blocks until signalled by the ISR */
+static void vGpioHandlerTask( void * pvParameters )
+{
+    ( void ) pvParameters;
+
+    for( ;; )
+    {
+        /* Block indefinitely, consuming no CPU, until the ISR gives
+         * the semaphore. portMAX_DELAY requires INCLUDE_vTaskSuspend=1. */
+        if( xSemaphoreTake( xGpioSemaphore, portMAX_DELAY ) == pdTRUE )
+        {
+            /* Perform the actual work here — may block, allocate, etc. */
+            vProcessGpioEvent();
+        }
+    }
+}
+
+void vSetupGpioInterrupt( void )
+{
+    xGpioSemaphore = xSemaphoreCreateBinary();
+    configASSERT( xGpioSemaphore != NULL );
+
+    xTaskCreate( vGpioHandlerTask, "GpioHandler", 256, NULL, 5,
+                 &xGpioHandlerTask );
+
+    /* Configure NVIC at an acceptable priority before enabling */
+    NVIC_SetPriority( GPIO0_IRQn, configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY );
+    NVIC_EnableIRQ( GPIO0_IRQn );
+}
+```
+
+### Example: DMA complete ISR writing to a stream buffer
+
+Stream buffers provide byte-stream semantics and have dedicated `FromISR` functions:
+
+```c
+/* size_t xStreamBufferSendFromISR(
+ *     StreamBufferHandle_t  xStreamBuffer,
+ *     const void *          pvTxData,
+ *     size_t                xDataLengthBytes,
+ *     BaseType_t *          pxHigherPriorityTaskWoken );
+ */
+
+static StreamBufferHandle_t xDmaStreamBuffer;
+
+/* DMA transfer-complete ISR */
+void DMA1_Stream0_IRQHandler( void )
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    extern uint8_t ucDmaRxBuffer[];
+    extern size_t  xDmaTransferLength;
+
+    /* Clear DMA transfer-complete flag in hardware */
+    DMA1->LIFCR = DMA_LIFCR_CTCIF0;
+
+    /* Push received bytes into the stream buffer for task-level processing */
+    xStreamBufferSendFromISR(
+        xDmaStreamBuffer,
+        ( const void * ) ucDmaRxBuffer,
+        xDmaTransferLength,
+        &xHigherPriorityTaskWoken );
+
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+```
+
+<Note>
+Stream buffers assume a single writer and a single reader. Using multiple ISRs (or multiple tasks) as writers requires external serialisation such as a critical section around each `xStreamBufferSendFromISR()` call.
+</Note>

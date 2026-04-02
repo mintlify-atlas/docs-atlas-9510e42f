@@ -1,0 +1,379 @@
+---
+title: "Event Group API"
+description: "Complete API reference for FreeRTOS event groups"
+---
+
+Event groups allow tasks to wait for any combination of events to occur. Each event is represented by a bit within a value of type `EventBits_t`. Requires `configUSE_EVENT_GROUPS == 1`. All functions are declared in `event_groups.h`.
+
+**Key types**
+
+```c
+typedef struct EventGroupDef_t *EventGroupHandle_t;
+typedef TickType_t              EventBits_t;
+```
+
+The number of usable bits depends on `configTICK_TYPE_WIDTH_IN_BITS`:
+- 16-bit (`TICK_TYPE_WIDTH_16_BITS`): 8 usable bits (0–7)
+- 32-bit (`TICK_TYPE_WIDTH_32_BITS`): 24 usable bits (0–23)
+- 64-bit (`TICK_TYPE_WIDTH_64_BITS`): 56 usable bits (0–55)
+
+---
+
+## Creation
+
+### xEventGroupCreate
+
+```c
+EventGroupHandle_t xEventGroupCreate( void );
+```
+
+Creates a new event group using dynamic memory allocation. Requires `configSUPPORT_DYNAMIC_ALLOCATION == 1`.
+
+<ResponseField name="return" type="EventGroupHandle_t">
+  Handle to the created event group, or `NULL` if there was insufficient FreeRTOS heap.
+</ResponseField>
+
+---
+
+### xEventGroupCreateStatic
+
+```c
+EventGroupHandle_t xEventGroupCreateStatic(
+    StaticEventGroup_t *pxEventGroupBuffer
+);
+```
+
+Creates a new event group using static memory. Requires `configSUPPORT_STATIC_ALLOCATION == 1`.
+
+<ParamField path="pxEventGroupBuffer" type="StaticEventGroup_t *" required>
+  Pointer to a `StaticEventGroup_t` variable that will hold the event group data structure.
+</ParamField>
+
+<ResponseField name="return" type="EventGroupHandle_t">
+  Handle to the created event group, or `NULL` if `pxEventGroupBuffer` is `NULL`.
+</ResponseField>
+
+---
+
+## Waiting for bits
+
+### xEventGroupWaitBits
+
+```c
+EventBits_t xEventGroupWaitBits(
+    EventGroupHandle_t xEventGroup,
+    const EventBits_t  uxBitsToWaitFor,
+    const BaseType_t   xClearOnExit,
+    const BaseType_t   xWaitForAllBits,
+    TickType_t         xTicksToWait
+);
+```
+
+Blocks the calling task until the specified bit pattern is set in the event group, or until the block time expires. Cannot be called from an ISR.
+
+<ParamField path="xEventGroup" type="EventGroupHandle_t" required>
+  Handle to the event group in which the bits are being tested.
+</ParamField>
+
+<ParamField path="uxBitsToWaitFor" type="const EventBits_t" required>
+  Bitmask specifying which bits to test. For example, to wait for bit 0 and bit 2, pass `0x05`. Must not be `0`.
+</ParamField>
+
+<ParamField path="xClearOnExit" type="const BaseType_t" required>
+  If `pdTRUE`, the bits specified by `uxBitsToWaitFor` that were set in the event group are cleared before the function returns, provided the wait condition was met (i.e., not a timeout). If `pdFALSE`, the bits are not altered on return.
+</ParamField>
+
+<ParamField path="xWaitForAllBits" type="const BaseType_t" required>
+  If `pdTRUE`, the function waits until **all** bits in `uxBitsToWaitFor` are set (AND logic). If `pdFALSE`, the function returns when **any** one of the bits is set (OR logic).
+</ParamField>
+
+<ParamField path="xTicksToWait" type="TickType_t" required>
+  Maximum ticks to block. Pass `portMAX_DELAY` to block indefinitely (requires `INCLUDE_vTaskSuspend == 1`).
+</ParamField>
+
+<ResponseField name="return" type="EventBits_t">
+  The value of the event group at the time the wait condition was met, or at the time the block expired. Test the return value to determine which bits were set. If a timeout occurred, not all waited-for bits will be set.
+</ResponseField>
+
+---
+
+## Setting bits
+
+### xEventGroupSetBits
+
+```c
+EventBits_t xEventGroupSetBits(
+    EventGroupHandle_t xEventGroup,
+    const EventBits_t  uxBitsToSet
+);
+```
+
+Sets one or more bits in an event group, automatically unblocking any task that was waiting for those bits. Cannot be called from an ISR.
+
+<ParamField path="xEventGroup" type="EventGroupHandle_t" required>
+  Handle to the event group.
+</ParamField>
+
+<ParamField path="uxBitsToSet" type="const EventBits_t" required>
+  Bitmask of bits to set. For example, `0x09` sets bits 0 and 3.
+</ParamField>
+
+<ResponseField name="return" type="EventBits_t">
+  Value of the event group after the bits were set. Note that set bits may already have been cleared by a newly unblocked task if that task had `xClearOnExit` set to `pdTRUE`.
+</ResponseField>
+
+---
+
+### xEventGroupSetBitsFromISR
+
+```c
+BaseType_t xEventGroupSetBitsFromISR(
+    EventGroupHandle_t xEventGroup,
+    const EventBits_t  uxBitsToSet,
+    BaseType_t        *pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xEventGroupSetBits()`. Defers the set operation to the timer daemon task via the timer command queue. Requires `INCLUDE_xTimerPendFunctionCall == 1` and `configUSE_TIMERS == 1`.
+
+<ParamField path="xEventGroup" type="EventGroupHandle_t" required>
+  Handle to the event group.
+</ParamField>
+
+<ParamField path="uxBitsToSet" type="const EventBits_t" required>
+  Bitmask of bits to set.
+</ParamField>
+
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t *" required>
+  Set to `pdTRUE` if sending the command to the timer daemon task caused it to unblock with a higher priority than the interrupted task. Initialize to `pdFALSE`.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if the message was successfully posted to the timer command queue. `pdFALSE` if the queue was full.
+</ResponseField>
+
+---
+
+## Clearing bits
+
+### xEventGroupClearBits
+
+```c
+EventBits_t xEventGroupClearBits(
+    EventGroupHandle_t xEventGroup,
+    const EventBits_t  uxBitsToClear
+);
+```
+
+Clears one or more bits in an event group. Cannot be called from an ISR.
+
+<ParamField path="xEventGroup" type="EventGroupHandle_t" required>
+  Handle to the event group.
+</ParamField>
+
+<ParamField path="uxBitsToClear" type="const EventBits_t" required>
+  Bitmask of bits to clear.
+</ParamField>
+
+<ResponseField name="return" type="EventBits_t">
+  Value of the event group **before** the specified bits were cleared.
+</ResponseField>
+
+---
+
+### xEventGroupClearBitsFromISR
+
+```c
+BaseType_t xEventGroupClearBitsFromISR(
+    EventGroupHandle_t xEventGroup,
+    const EventBits_t  uxBitsToClear
+);
+```
+
+ISR-safe version of `xEventGroupClearBits()`. Defers the clear to the timer daemon task. After this returns `pdPASS`, call `portYIELD_FROM_ISR(pdTRUE)` to ensure the timer task runs promptly. Requires `INCLUDE_xTimerPendFunctionCall == 1` and `configUSE_TIMERS == 1`.
+
+<ParamField path="xEventGroup" type="EventGroupHandle_t" required>
+  Handle to the event group.
+</ParamField>
+
+<ParamField path="uxBitsToClear" type="const EventBits_t" required>
+  Bitmask of bits to clear.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if the request was posted. `pdFALSE` if the timer queue was full.
+</ResponseField>
+
+---
+
+## Reading bits
+
+### xEventGroupGetBits
+
+```c
+EventBits_t xEventGroupGetBits( EventGroupHandle_t xEventGroup );
+```
+
+Returns the current bit value of an event group without modifying it. Implemented as a macro calling `xEventGroupClearBits()` with a clear mask of `0`. Cannot be called from an ISR.
+
+<ParamField path="xEventGroup" type="EventGroupHandle_t" required>
+  Handle to the event group.
+</ParamField>
+
+<ResponseField name="return" type="EventBits_t">
+  Current event group bit value.
+</ResponseField>
+
+---
+
+### xEventGroupGetBitsFromISR
+
+```c
+EventBits_t xEventGroupGetBitsFromISR( EventGroupHandle_t xEventGroup );
+```
+
+ISR-safe version of `xEventGroupGetBits()`.
+
+<ParamField path="xEventGroup" type="EventGroupHandle_t" required>
+  Handle to the event group.
+</ParamField>
+
+<ResponseField name="return" type="EventBits_t">
+  Current event group bit value at the time of the call.
+</ResponseField>
+
+---
+
+## Barrier synchronization
+
+### xEventGroupSync
+
+```c
+EventBits_t xEventGroupSync(
+    EventGroupHandle_t xEventGroup,
+    const EventBits_t  uxBitsToSet,
+    const EventBits_t  uxBitsToWaitFor,
+    TickType_t         xTicksToWait
+);
+```
+
+Atomically sets bits in the event group and then waits for a combination of bits to be set. Used to synchronize multiple tasks at a common point ("rendezvous"). When all tasks reach the synchronization point, all waited-for bits are automatically cleared. Cannot be called from an ISR.
+
+<ParamField path="xEventGroup" type="EventGroupHandle_t" required>
+  Handle to the event group.
+</ParamField>
+
+<ParamField path="uxBitsToSet" type="const EventBits_t" required>
+  The bits this task sets to signal it has reached the synchronization point.
+</ParamField>
+
+<ParamField path="uxBitsToWaitFor" type="const EventBits_t" required>
+  Bitmask of all bits (all participating tasks' bits) that must be set before any task proceeds. Typically this is the OR of all tasks' `uxBitsToSet` values.
+</ParamField>
+
+<ParamField path="xTicksToWait" type="TickType_t" required>
+  Maximum ticks to wait for all `uxBitsToWaitFor` bits to become set.
+</ParamField>
+
+<ResponseField name="return" type="EventBits_t">
+  Value of the event group at the time the sync condition was met or at timeout. If all bits were set, the return value will have all `uxBitsToWaitFor` bits set (before they are automatically cleared).
+</ResponseField>
+
+---
+
+## Deletion
+
+### vEventGroupDelete
+
+```c
+void vEventGroupDelete( EventGroupHandle_t xEventGroup );
+```
+
+Deletes an event group. Tasks blocked on `xEventGroupWaitBits()` will be unblocked and receive a return value of `0`.
+
+<ParamField path="xEventGroup" type="EventGroupHandle_t" required>
+  Handle to the event group to delete.
+</ParamField>
+
+---
+
+## Examples
+
+### AND-logic wait (all bits must be set)
+
+```c
+#include "FreeRTOS.h"
+#include "event_groups.h"
+
+#define TASK_A_BIT  ( 1 << 0 )
+#define TASK_B_BIT  ( 1 << 1 )
+#define ALL_BITS    ( TASK_A_BIT | TASK_B_BIT )
+
+static EventGroupHandle_t xEventGroup;
+
+void vSetup( void )
+{
+    xEventGroup = xEventGroupCreate();
+    configASSERT( xEventGroup != NULL );
+}
+
+void vTaskA( void *pvParameters )
+{
+    /* Do work, then signal completion. */
+    xEventGroupSetBits( xEventGroup, TASK_A_BIT );
+
+    /* Wait until both Task A and Task B have finished. */
+    EventBits_t uxBits = xEventGroupWaitBits(
+        xEventGroup,
+        ALL_BITS,   /* wait for both bits */
+        pdTRUE,     /* clear on exit */
+        pdTRUE,     /* wait for ALL bits (AND logic) */
+        portMAX_DELAY );
+
+    if( ( uxBits & ALL_BITS ) == ALL_BITS )
+    {
+        /* Both tasks completed; proceed safely. */
+    }
+
+    vTaskDelete( NULL );
+}
+```
+
+---
+
+### Barrier synchronization with xEventGroupSync
+
+```c
+#include "FreeRTOS.h"
+#include "event_groups.h"
+
+#define TASK_0_BIT  ( 1 << 0 )
+#define TASK_1_BIT  ( 1 << 1 )
+#define TASK_2_BIT  ( 1 << 2 )
+#define ALL_SYNC_BITS ( TASK_0_BIT | TASK_1_BIT | TASK_2_BIT )
+
+static EventGroupHandle_t xSyncEventGroup;
+
+/* Each of the three tasks calls xEventGroupSync() with its own bit.
+ * All three tasks block until all three bits are set, then proceed
+ * simultaneously. */
+void vTask0( void *pvParameters )
+{
+    for( ;; )
+    {
+        /* Perform work here... */
+
+        /* Signal this task reached the barrier, then wait for all tasks. */
+        EventBits_t uxReturn = xEventGroupSync(
+            xSyncEventGroup,
+            TASK_0_BIT,     /* bit this task sets */
+            ALL_SYNC_BITS,  /* bits to wait for */
+            portMAX_DELAY );
+
+        if( ( uxReturn & ALL_SYNC_BITS ) == ALL_SYNC_BITS )
+        {
+            /* All three tasks reached the barrier. */
+        }
+    }
+}
+```

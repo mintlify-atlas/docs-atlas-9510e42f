@@ -1,80 +1,295 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick start"
+description: "Integrate FreeRTOS Kernel into your project using CMake FetchContent or git submodule"
 ---
 
-## Get started in three steps
+This guide walks through adding FreeRTOS Kernel V11.1.0 to a CMake project, creating a minimal `FreeRTOSConfig.h`, and running your first task.
 
-Get your documentation site running locally and make your first customization.
+<Note>
+The recommended approach is CMake FetchContent with a pinned tag so your build is reproducible. Using `main` or `HEAD` means your project may break if the upstream repository changes.
+</Note>
 
-### Step 1: Set up your local environment
+## Add the kernel to your project
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+Choose how you want to consume the kernel source:
 
-### Step 2: Deploy your changes
+<CodeGroup>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+```cmake CMakeLists.txt (FetchContent)
+include(FetchContent)
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+FetchContent_Declare(
+  freertos_kernel
+  GIT_REPOSITORY https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+  GIT_TAG        V11.1.0  # Pin to a specific release tag
+)
+```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+```bash git submodule
+git submodule add https://github.com/FreeRTOS/FreeRTOS-Kernel.git FreeRTOS-Kernel
+git submodule update --init
+```
 
-### Step 3: Go live
+</CodeGroup>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+<Steps>
+
+<Step title="Create the freertos_config library">
+
+The kernel CMakeLists.txt requires a CMake target named `freertos_config` that exposes the directory containing your `FreeRTOSConfig.h`. Create it before calling `FetchContent_MakeAvailable` (or `add_subdirectory` for submodule users):
+
+<CodeGroup>
+
+```cmake CMakeLists.txt (FetchContent)
+add_library(freertos_config INTERFACE)
+
+target_include_directories(freertos_config SYSTEM
+  INTERFACE
+    include  # Directory that contains FreeRTOSConfig.h
+)
+
+target_compile_definitions(freertos_config
+  INTERFACE
+    projCOVERAGE_TEST=0
+)
+```
+
+```cmake CMakeLists.txt (submodule)
+add_library(freertos_config INTERFACE)
+
+target_include_directories(freertos_config SYSTEM
+  INTERFACE
+    include  # Directory that contains FreeRTOSConfig.h
+)
+
+target_compile_definitions(freertos_config
+  INTERFACE
+    projCOVERAGE_TEST=0
+)
+
+# Add the kernel source tree
+add_subdirectory(FreeRTOS-Kernel)
+```
+
+</CodeGroup>
+
+</Step>
+
+<Step title="Set FREERTOS_HEAP and FREERTOS_PORT">
+
+Set the heap implementation number and the port string that matches your compiler and target hardware:
+
+```cmake CMakeLists.txt
+# Heap implementation: 1-5 (or a path to a custom heap_*.c)
+set(FREERTOS_HEAP "4" CACHE STRING "" FORCE)
+
+# Port for a native Linux/macOS build
+set(FREERTOS_PORT "GCC_POSIX" CACHE STRING "" FORCE)
+
+# Override with the correct cross-compile port when targeting embedded hardware
+if(CMAKE_CROSSCOMPILING)
+  set(FREERTOS_PORT "GCC_ARM_CM4F" CACHE STRING "" FORCE)
+endif()
+```
+
+<Note>
+Available port strings are listed in the kernel's `CMakeLists.txt`. Examples for GCC: `GCC_ARM_CM0`, `GCC_ARM_CM3`, `GCC_ARM_CM4F`, `GCC_ARM_CM7`, `GCC_ARM_CM33_NONSECURE`, `GCC_RISC_V`, `GCC_RP2040`, `GCC_XTENSA_ESP32`. Choose the one that matches your MCU and security configuration exactly.
+</Note>
+
+</Step>
+
+<Step title="Make the kernel available">
+
+For FetchContent, call `FetchContent_MakeAvailable` after defining `freertos_config` and the cache variables:
+
+```cmake CMakeLists.txt
+FetchContent_MakeAvailable(freertos_kernel)
+```
+
+For a submodule, `add_subdirectory` in the previous step already does this.
+
+</Step>
+
+<Step title="Link freertos_kernel to your application">
+
+```cmake CMakeLists.txt
+add_executable(my_app main.c)
+
+target_link_libraries(my_app
+  PRIVATE
+    freertos_kernel
+)
+```
+
+</Step>
+
+<Step title="Create FreeRTOSConfig.h">
+
+Place `FreeRTOSConfig.h` in the `include/` directory you specified for `freertos_config`. The file must be provided by your application — the kernel does not supply one. Below is a minimal starting point derived from the kernel's template at `examples/template_configuration/FreeRTOSConfig.h`:
+
+```c include/FreeRTOSConfig.h
+#ifndef FREERTOS_CONFIG_H
+#define FREERTOS_CONFIG_H
+
+/* Hardware */
+#define configCPU_CLOCK_HZ              ( ( unsigned long ) 20000000 )
+#define configTICK_RATE_HZ              100
+
+/* Scheduling */
+#define configUSE_PREEMPTION            1
+#define configUSE_TIME_SLICING          0
+#define configMAX_PRIORITIES            5
+#define configIDLE_SHOULD_YIELD         1
+
+/* Memory */
+#define configMINIMAL_STACK_SIZE        128   /* In words, not bytes */
+#define configTOTAL_HEAP_SIZE           4096  /* In bytes */
+#define configSUPPORT_DYNAMIC_ALLOCATION 1
+#define configSUPPORT_STATIC_ALLOCATION  0
+
+/* Features */
+#define configUSE_TIMERS                1
+#define configTIMER_TASK_PRIORITY       ( configMAX_PRIORITIES - 1 )
+#define configTIMER_TASK_STACK_DEPTH    configMINIMAL_STACK_SIZE
+#define configTIMER_QUEUE_LENGTH        10
+#define configUSE_MUTEXES               1
+#define configUSE_COUNTING_SEMAPHORES   1
+#define configUSE_TASK_NOTIFICATIONS    1
+#define configTASK_NOTIFICATION_ARRAY_ENTRIES 1
+
+/* Debug */
+#define configCHECK_FOR_STACK_OVERFLOW  2
+#define configUSE_MALLOC_FAILED_HOOK    0
+#define configASSERT( x )               \
+    if( ( x ) == 0 )                    \
+    {                                   \
+        taskDISABLE_INTERRUPTS();       \
+        for( ; ; );                     \
+    }
+
+/* Optional API functions */
+#define INCLUDE_vTaskPrioritySet        1
+#define INCLUDE_uxTaskPriorityGet       1
+#define INCLUDE_vTaskDelete             1
+#define INCLUDE_vTaskSuspend            1
+#define INCLUDE_xTaskDelayUntil         1
+#define INCLUDE_vTaskDelay              1
+#define INCLUDE_xTaskGetSchedulerState  1
+#define INCLUDE_xTaskGetCurrentTaskHandle 1
+#define INCLUDE_xTaskResumeFromISR      1
+
+#endif /* FREERTOS_CONFIG_H */
+```
+
+</Step>
+
+<Step title="Write your first task and start the scheduler">
+
+Create tasks with `xTaskCreate()` and hand control to the kernel with `vTaskStartScheduler()`. The scheduler never returns under normal operation.
+
+```c main.c
+#include "FreeRTOS.h"
+#include "task.h"
+
+/* Task function signature: void task_name( void *pvParameters ) */
+static void vBlinkTask( void *pvParameters )
+{
+    /* pvParameters is whatever was passed as the 4th argument to xTaskCreate */
+    ( void ) pvParameters;
+
+    for( ;; )
+    {
+        /* Replace with your hardware GPIO toggle */
+        /* BSP_LED_Toggle(); */
+
+        /* Block for 500 ms - converts ticks using pdMS_TO_TICKS() */
+        vTaskDelay( pdMS_TO_TICKS( 500 ) );
+    }
+}
+
+int main( void )
+{
+    /* Hardware initialisation goes here (clocks, GPIO, UART, etc.) */
+
+    /* Create the blink task:
+     *   - Task function: vBlinkTask
+     *   - Descriptive name (for debugging): "Blink"
+     *   - Stack size in words: configMINIMAL_STACK_SIZE
+     *   - Parameter passed to task: NULL
+     *   - Priority: 1  (higher number = higher priority)
+     *   - Task handle (not needed here): NULL
+     */
+    xTaskCreate(
+        vBlinkTask,              /* Task function */
+        "Blink",                 /* Name (debug only) */
+        configMINIMAL_STACK_SIZE, /* Stack depth in words */
+        NULL,                    /* Task parameter */
+        1,                       /* Priority */
+        NULL                     /* Task handle output */
+    );
+
+    /* Start the scheduler. vTaskStartScheduler() does not return
+     * unless there is insufficient heap to create the idle task. */
+    vTaskStartScheduler();
+
+    /* Should never reach here */
+    for( ;; );
+    return 0;
+}
+```
+
+<Tip>
+Use `pdMS_TO_TICKS( ms )` to convert milliseconds to tick counts. This keeps your delay values independent of `configTICK_RATE_HZ`.
+</Tip>
+
+</Step>
+
+</Steps>
+
+## Complete CMakeLists.txt example
+
+The following is a self-contained `CMakeLists.txt` combining all the steps above for a cross-compiled ARM Cortex-M4F target:
+
+```cmake CMakeLists.txt
+cmake_minimum_required(VERSION 3.15)
+project(my_freertos_app C)
+
+include(FetchContent)
+
+# 1. Declare the FreeRTOS Kernel source
+FetchContent_Declare(
+  freertos_kernel
+  GIT_REPOSITORY https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+  GIT_TAG        V11.1.0
+)
+
+# 2. Create the config library pointing at include/ for FreeRTOSConfig.h
+add_library(freertos_config INTERFACE)
+target_include_directories(freertos_config SYSTEM INTERFACE include)
+target_compile_definitions(freertos_config INTERFACE projCOVERAGE_TEST=0)
+
+# 3. Select heap and port
+set(FREERTOS_HEAP "4" CACHE STRING "" FORCE)
+set(FREERTOS_PORT "GCC_POSIX" CACHE STRING "" FORCE)
+if(CMAKE_CROSSCOMPILING)
+  set(FREERTOS_PORT "GCC_ARM_CM4F" CACHE STRING "" FORCE)
+endif()
+
+# 4. Download and configure the kernel
+FetchContent_MakeAvailable(freertos_kernel)
+
+# 5. Build and link the application
+add_executable(my_app main.c)
+target_link_libraries(my_app PRIVATE freertos_kernel)
+```
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Configuration" icon="sliders" href="/configuration">
+    Learn all `FreeRTOSConfig.h` options and how to tune the kernel for your hardware.
+  </Card>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Understand the kernel architecture, objects, and supported architectures.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

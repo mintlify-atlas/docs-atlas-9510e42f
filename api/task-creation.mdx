@@ -1,0 +1,323 @@
+---
+title: 'Task Creation API'
+description: 'API reference for creating and deleting FreeRTOS tasks'
+---
+
+Functions for creating tasks dynamically, statically, and with MPU memory region restrictions, plus task deletion. Include `task.h` in your source files to use these functions.
+
+## xTaskCreate
+
+Create a new task and add it to the list of tasks that are ready to run. Both the task control block (TCB) and stack are allocated dynamically from the heap.
+
+Requires `configSUPPORT_DYNAMIC_ALLOCATION == 1`.
+
+```c
+BaseType_t xTaskCreate(
+    TaskFunction_t pxTaskCode,
+    const char * const pcName,
+    const configSTACK_DEPTH_TYPE uxStackDepth,
+    void * const pvParameters,
+    UBaseType_t uxPriority,
+    TaskHandle_t * const pxCreatedTask
+);
+```
+
+<ParamField path="pxTaskCode" type="TaskFunction_t" required>
+  Pointer to the task entry function. Tasks must be implemented to never return — they typically contain an infinite loop.
+</ParamField>
+
+<ParamField path="pcName" type="const char * const" required>
+  Descriptive name for the task, used mainly for debugging. Maximum length is defined by `configMAX_TASK_NAME_LEN` (default 16).
+</ParamField>
+
+<ParamField path="uxStackDepth" type="const configSTACK_DEPTH_TYPE" required>
+  Size of the task stack in words (not bytes). For example, on a 32-bit target a value of 100 allocates 400 bytes of stack.
+</ParamField>
+
+<ParamField path="pvParameters" type="void * const">
+  Pointer passed as the sole argument to the task function. Must remain valid for the lifetime of the task.
+</ParamField>
+
+<ParamField path="uxPriority" type="UBaseType_t" required>
+  Priority at which the task runs. `tskIDLE_PRIORITY` is the lowest (0). On MPU ports, or `portPRIVILEGE_BIT` to run in privileged mode.
+</ParamField>
+
+<ParamField path="pxCreatedTask" type="TaskHandle_t * const">
+  Output parameter. Written with a handle that can be used to reference the task in subsequent API calls. Pass `NULL` if the handle is not needed.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if the task was created and added to the ready list. `errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY` if there was insufficient heap memory.
+</ResponseField>
+
+```c example
+// Task function — must never return.
+void vTaskCode( void *pvParameters )
+{
+    for( ;; )
+    {
+        // Task work here.
+    }
+}
+
+void vSetupTasks( void )
+{
+    static uint8_t ucParameter = 42;
+    TaskHandle_t xHandle = NULL;
+
+    // Create the task. ucParameter must outlive the task, so it is static.
+    BaseType_t xResult = xTaskCreate(
+        vTaskCode,            // Function that implements the task.
+        "MyTask",             // Text name (for debugging).
+        256,                  // Stack size in words.
+        &ucParameter,         // Parameter passed into the task.
+        tskIDLE_PRIORITY + 1, // Priority.
+        &xHandle              // Handle output.
+    );
+
+    configASSERT( xResult == pdPASS );
+
+    // Use the handle to delete the task later if required.
+    // vTaskDelete( xHandle );
+}
+```
+
+---
+
+## xTaskCreateStatic
+
+Create a new task without dynamic memory allocation. The caller provides the stack buffer and the `StaticTask_t` structure that holds the TCB.
+
+Requires `configSUPPORT_STATIC_ALLOCATION == 1`.
+
+```c
+TaskHandle_t xTaskCreateStatic(
+    TaskFunction_t pxTaskCode,
+    const char * const pcName,
+    const configSTACK_DEPTH_TYPE uxStackDepth,
+    void * const pvParameters,
+    UBaseType_t uxPriority,
+    StackType_t * const puxStackBuffer,
+    StaticTask_t * const pxTaskBuffer
+);
+```
+
+<ParamField path="pxTaskCode" type="TaskFunction_t" required>
+  Pointer to the task entry function. Must never return.
+</ParamField>
+
+<ParamField path="pcName" type="const char * const" required>
+  Descriptive name for debugging. Maximum length is `configMAX_TASK_NAME_LEN`.
+</ParamField>
+
+<ParamField path="uxStackDepth" type="const configSTACK_DEPTH_TYPE" required>
+  Number of `StackType_t` elements in `puxStackBuffer`. On a 32-bit target each element is 4 bytes.
+</ParamField>
+
+<ParamField path="pvParameters" type="void * const">
+  Value passed as the argument to the task function.
+</ParamField>
+
+<ParamField path="uxPriority" type="UBaseType_t" required>
+  Task priority. `tskIDLE_PRIORITY` is the lowest.
+</ParamField>
+
+<ParamField path="puxStackBuffer" type="StackType_t * const" required>
+  Pointer to a `StackType_t` array of at least `uxStackDepth` elements used as the task stack. Must not be `NULL`.
+</ParamField>
+
+<ParamField path="pxTaskBuffer" type="StaticTask_t * const" required>
+  Pointer to a `StaticTask_t` variable that holds the task's internal data structure. Must not be `NULL`.
+</ParamField>
+
+<ResponseField name="return" type="TaskHandle_t">
+  Handle of the created task if both `puxStackBuffer` and `pxTaskBuffer` are non-NULL. `NULL` if either buffer is `NULL`.
+</ResponseField>
+
+```c example
+#define STACK_SIZE 200
+
+// TCB and stack storage — both must have static (or global) lifetime.
+static StaticTask_t xTaskBuffer;
+static StackType_t  xStack[ STACK_SIZE ];
+
+void vTaskCode( void *pvParameters )
+{
+    configASSERT( ( uint32_t ) pvParameters == 1U );
+    for( ;; )
+    {
+        // Task work here.
+    }
+}
+
+void vSetupStaticTask( void )
+{
+    TaskHandle_t xHandle;
+
+    xHandle = xTaskCreateStatic(
+        vTaskCode,          // Task function.
+        "StaticTask",       // Name.
+        STACK_SIZE,         // Stack depth in words.
+        ( void * ) 1,       // Parameter.
+        tskIDLE_PRIORITY,   // Priority.
+        xStack,             // Stack buffer.
+        &xTaskBuffer        // TCB buffer.
+    );
+
+    // xHandle is valid because neither buffer was NULL.
+    configASSERT( xHandle != NULL );
+}
+```
+
+---
+
+## xTaskCreateRestricted
+
+Create a task that runs under MPU constraints. Stack is provided by the caller; the TCB is allocated dynamically. The `TaskParameters_t` structure carries the full task definition including memory region descriptors.
+
+Requires `portUSING_MPU_WRAPPERS == 1` and `configSUPPORT_DYNAMIC_ALLOCATION == 1`.
+
+```c
+BaseType_t xTaskCreateRestricted(
+    const TaskParameters_t * const pxTaskDefinition,
+    TaskHandle_t * pxCreatedTask
+);
+```
+
+<ParamField path="pxTaskDefinition" type="const TaskParameters_t * const" required>
+  Pointer to a `TaskParameters_t` structure containing the task function, name, stack depth, parameters, priority, stack buffer, and up to `portNUM_CONFIGURABLE_REGIONS` MPU memory region definitions.
+</ParamField>
+
+<ParamField path="pxCreatedTask" type="TaskHandle_t *">
+  Output parameter written with the task handle. Pass `NULL` if the handle is not needed.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if the task was created successfully. An error code from `projdefs.h` otherwise.
+</ResponseField>
+
+```c example
+static const TaskParameters_t xTaskParams =
+{
+    vATask,                            // pvTaskCode
+    "MPUTask",                         // pcName
+    100,                               // uxStackDepth (words)
+    NULL,                              // pvParameters
+    ( 1U | portPRIVILEGE_BIT ),        // uxPriority (privileged)
+    cStackBuffer,                      // puxStackBuffer (caller-provided)
+    {
+        // Base address          Length   Access flags
+        { cReadWriteArray,       32,      portMPU_REGION_READ_WRITE },
+        { cReadOnlyArray,        32,      portMPU_REGION_READ_ONLY },
+        { cPrivilegedArray,      128,     portMPU_REGION_PRIVILEGED_READ_WRITE },
+    }
+};
+
+int main( void )
+{
+    TaskHandle_t xHandle;
+    xTaskCreateRestricted( &xTaskParams, &xHandle );
+    vTaskStartScheduler();
+    for( ;; );
+}
+```
+
+---
+
+## xTaskCreateRestrictedStatic
+
+Create an MPU-restricted task with no dynamic memory allocation. Both the stack and TCB are supplied by the caller via `TaskParameters_t`.
+
+Requires `portUSING_MPU_WRAPPERS == 1` and `configSUPPORT_STATIC_ALLOCATION == 1`.
+
+```c
+BaseType_t xTaskCreateRestrictedStatic(
+    const TaskParameters_t * const pxTaskDefinition,
+    TaskHandle_t * pxCreatedTask
+);
+```
+
+<ParamField path="pxTaskDefinition" type="const TaskParameters_t * const" required>
+  Pointer to a `TaskParameters_t` structure. When `configSUPPORT_STATIC_ALLOCATION` is set, the structure includes an additional `pxTaskBuffer` member pointing to a `StaticTask_t` variable that holds the TCB.
+</ParamField>
+
+<ParamField path="pxCreatedTask" type="TaskHandle_t *">
+  Output parameter written with the task handle. Pass `NULL` if the handle is not needed.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if the task was created successfully. An error code from `projdefs.h` otherwise.
+</ResponseField>
+
+```c example
+static PRIVILEGED_DATA StaticTask_t xTaskBuffer;
+
+static const TaskParameters_t xTaskParams =
+{
+    vATask,
+    "StaticMPUTask",
+    100,
+    NULL,
+    ( 1U | portPRIVILEGE_BIT ),
+    cStackBuffer,
+    {
+        { cReadWriteArray, 32,  portMPU_REGION_READ_WRITE },
+        { cReadOnlyArray,  32,  portMPU_REGION_READ_ONLY },
+        { 0,               0,   0 },
+    },
+    &xTaskBuffer   // Static TCB — only present when configSUPPORT_STATIC_ALLOCATION == 1
+};
+
+int main( void )
+{
+    TaskHandle_t xHandle;
+    xTaskCreateRestrictedStatic( &xTaskParams, &xHandle );
+    vTaskStartScheduler();
+    for( ;; );
+}
+```
+
+---
+
+## vTaskDelete
+
+Remove a task from the kernel's management. The task is removed from all ready, blocked, suspended, and event lists.
+
+Requires `INCLUDE_vTaskDelete == 1`.
+
+```c
+void vTaskDelete( TaskHandle_t xTaskToDelete );
+```
+
+<ParamField path="xTaskToDelete" type="TaskHandle_t" required>
+  Handle of the task to delete. Pass `NULL` to delete the calling task.
+</ParamField>
+
+<Info>
+  The idle task frees kernel-allocated memory (TCB and stack) for dynamically created tasks that have been deleted. The idle task must not be starved of CPU time or this cleanup will not occur. Memory allocated by the task's own code is not freed automatically.
+</Info>
+
+```c example
+void vManageTask( void )
+{
+    TaskHandle_t xHandle = NULL;
+
+    // Create a task.
+    xTaskCreate( vTaskCode, "Temp", 256, NULL, tskIDLE_PRIORITY, &xHandle );
+
+    // ... do some work ...
+
+    // Delete the task. The idle task will free its TCB and stack.
+    if( xHandle != NULL )
+    {
+        vTaskDelete( xHandle );
+    }
+}
+
+// A task can also delete itself.
+void vSelfDeleting( void *pvParameters )
+{
+    // Do work.
+    vTaskDelete( NULL ); // Delete the calling task.
+}
+```

@@ -1,0 +1,432 @@
+---
+title: 'Task Utilities API'
+description: 'API reference for task information, scheduler control, and critical sections'
+---
+
+Utility functions and macros for querying task handles, reading the tick counter, inspecting stack usage, listing tasks, controlling the scheduler, and protecting shared resources with critical sections. Include `task.h` in your source files.
+
+---
+
+## Task handle and name functions
+
+### xTaskGetCurrentTaskHandle
+
+Return the handle of the currently running task. Can be called from task context.
+
+```c
+TaskHandle_t xTaskGetCurrentTaskHandle( void );
+```
+
+<ResponseField name="return" type="TaskHandle_t">
+  Handle of the calling task.
+</ResponseField>
+
+```c example
+void vTaskCode( void *pvParameters )
+{
+    TaskHandle_t xSelf = xTaskGetCurrentTaskHandle();
+    // Pass xSelf to another task or store it for later reference.
+    ( void ) xSelf;
+    for( ;; ) {}
+}
+```
+
+---
+
+### xTaskGetHandle
+
+Look up a task handle by its name. This function traverses all task lists and is relatively slow — use sparingly and never in time-critical paths.
+
+Requires `INCLUDE_xTaskGetHandle == 1`.
+
+```c
+TaskHandle_t xTaskGetHandle( const char * pcNameToQuery );
+```
+
+<ParamField path="pcNameToQuery" type="const char *" required>
+  Null-terminated string matching the `pcName` argument used when the task was created.
+</ParamField>
+
+<ResponseField name="return" type="TaskHandle_t">
+  Handle of the first task whose name matches `pcNameToQuery`, or `NULL` if no match is found.
+</ResponseField>
+
+```c example
+TaskHandle_t xHandle = xTaskGetHandle( "Sensor" );
+
+if( xHandle != NULL )
+{
+    vTaskSuspend( xHandle );
+}
+```
+
+---
+
+## Tick counter functions
+
+### xTaskGetTickCount
+
+Return the current tick count. The tick counter increments each RTOS tick interrupt (period defined by `configTICK_RATE_HZ`).
+
+```c
+TickType_t xTaskGetTickCount( void );
+```
+
+<ResponseField name="return" type="TickType_t">
+  Number of ticks that have elapsed since `vTaskStartScheduler()` was called.
+</ResponseField>
+
+---
+
+### xTaskGetTickCountFromISR
+
+ISR-safe version of `xTaskGetTickCount()`. Safe to call from an interrupt when `TickType_t` is the natural word size or interrupt nesting is not in use.
+
+```c
+TickType_t xTaskGetTickCountFromISR( void );
+```
+
+<ResponseField name="return" type="TickType_t">
+  Current tick count.
+</ResponseField>
+
+```c example
+void vTimestampISR( void )
+{
+    TickType_t xNow = xTaskGetTickCountFromISR();
+    // Record timestamp without entering a critical section.
+    xLastEventTick = xNow;
+}
+```
+
+---
+
+## Stack inspection
+
+### uxTaskGetStackHighWaterMark
+
+Return the minimum amount of stack space (in words) that has remained free since the task was created. A value close to zero indicates the task is near a stack overflow.
+
+Requires `INCLUDE_uxTaskGetStackHighWaterMark == 1`.
+
+```c
+UBaseType_t uxTaskGetStackHighWaterMark( TaskHandle_t xTask );
+```
+
+<ParamField path="xTask" type="TaskHandle_t" required>
+  Handle of the task to inspect. Pass `NULL` to inspect the calling task's stack.
+</ParamField>
+
+<ResponseField name="return" type="UBaseType_t">
+  Minimum free stack space in words (not bytes) since the task started. On a 32-bit target, multiply by 4 to convert to bytes.
+</ResponseField>
+
+<Tip>
+  Call `uxTaskGetStackHighWaterMark()` during development to measure actual peak stack usage. Set each task's stack to the measured high-water mark plus a safety margin (commonly 10–20 %) to minimise wasted RAM without risking overflow.
+</Tip>
+
+```c example
+// Check the stack high-water mark for all tasks in the system.
+void vCheckStackUsage( void )
+{
+    UBaseType_t uxHighWater;
+
+    // Check the calling task.
+    uxHighWater = uxTaskGetStackHighWaterMark( NULL );
+    printf( "Monitor task HWM: %u words\n", ( unsigned ) uxHighWater );
+
+    // Check a specific task by handle.
+    if( xSensorTaskHandle != NULL )
+    {
+        uxHighWater = uxTaskGetStackHighWaterMark( xSensorTaskHandle );
+        printf( "Sensor task HWM: %u words\n", ( unsigned ) uxHighWater );
+    }
+
+    if( xCommsTaskHandle != NULL )
+    {
+        uxHighWater = uxTaskGetStackHighWaterMark( xCommsTaskHandle );
+        printf( "Comms task HWM:  %u words\n", ( unsigned ) uxHighWater );
+    }
+}
+```
+
+---
+
+## Task listing and run-time statistics
+
+### vTaskList
+
+Write a human-readable table of all tasks (name, state, priority, stack high-water mark, task number) into a caller-supplied buffer.
+
+This is a backward-compatibility macro that calls `vTaskListTasks()` with `configSTATS_BUFFER_MAX_LENGTH` as the buffer length. New code should call `vTaskListTasks()` directly and supply the buffer length explicitly.
+
+Requires `configUSE_TRACE_FACILITY == 1` and `configUSE_STATS_FORMATTING_FUNCTIONS > 0`.
+
+```c
+#define vTaskList( pcWriteBuffer ) \
+    vTaskListTasks( ( pcWriteBuffer ), configSTATS_BUFFER_MAX_LENGTH )
+```
+
+Underlying function:
+
+```c
+void vTaskListTasks( char * pcWriteBuffer, size_t uxBufferLength );
+```
+
+<ParamField path="pcWriteBuffer" type="char *" required>
+  Buffer into which the ASCII table is written. Allow approximately 40 bytes per task.
+</ParamField>
+
+<ParamField path="uxBufferLength" type="size_t" required>
+  Length of `pcWriteBuffer` in bytes (`vTaskListTasks` only).
+</ParamField>
+
+<Warning>
+  `vTaskList()` disables interrupts for its entire duration. It calls `snprintf()` internally, which may consume significant stack space. This function is intended for debugging only — do not call it from production code on systems with real-time constraints.
+</Warning>
+
+```c example
+void vPrintTaskList( void )
+{
+    // Allow 40 bytes per task; adjust if more tasks are running.
+    static char pcBuffer[ 40 * 10 ];
+
+    vTaskListTasks( pcBuffer, sizeof( pcBuffer ) );
+
+    // Output format: Name  State  Priority  StackHWM  TaskNum
+    printf( "%s", pcBuffer );
+}
+```
+
+Sample output:
+
+```
+Task A       X       2           67           2
+Task B       R       1           67           3
+IDLE         R       0           67           5
+Tmr Svc      B       6           137          6
+```
+
+State codes: `X` = running, `R` = ready, `B` = blocked, `S` = suspended, `D` = deleted (pending idle cleanup).
+
+---
+
+### vTaskGetRunTimeStats
+
+Write a human-readable table of CPU usage statistics (absolute run-time counter and percentage) for all tasks.
+
+Backward-compatibility macro; calls `vTaskGetRunTimeStatistics()` with `configSTATS_BUFFER_MAX_LENGTH`.
+
+Requires `configGENERATE_RUN_TIME_STATS == 1`, `configUSE_STATS_FORMATTING_FUNCTIONS > 0`, and `configUSE_TRACE_FACILITY == 1`. The application must also implement `portCONFIGURE_TIMER_FOR_RUN_TIME_STATS()` and `portGET_RUN_TIME_COUNTER_VALUE()`.
+
+```c
+#define vTaskGetRunTimeStats( pcWriteBuffer ) \
+    vTaskGetRunTimeStatistics( ( pcWriteBuffer ), configSTATS_BUFFER_MAX_LENGTH )
+```
+
+Underlying function:
+
+```c
+void vTaskGetRunTimeStatistics( char * pcWriteBuffer, size_t uxBufferLength );
+```
+
+<ParamField path="pcWriteBuffer" type="char *" required>
+  Buffer for the ASCII report. Allow approximately 40 bytes per task.
+</ParamField>
+
+<ParamField path="uxBufferLength" type="size_t" required>
+  Buffer length (`vTaskGetRunTimeStatistics` only).
+</ParamField>
+
+```c example
+void vPrintCPUStats( void )
+{
+    static char pcBuffer[ 40 * 10 ];
+
+    vTaskGetRunTimeStatistics( pcBuffer, sizeof( pcBuffer ) );
+    printf( "%s", pcBuffer );
+}
+```
+
+---
+
+## Scheduler control
+
+### vTaskStartScheduler
+
+Start the RTOS tick and hand control to the scheduler. After this call the kernel decides which task runs. The function only returns if there is insufficient heap memory to create the idle task (or the timer task if software timers are enabled).
+
+```c
+void vTaskStartScheduler( void );
+```
+
+```c example
+int main( void )
+{
+    xTaskCreate( vAppTask, "App", 256, NULL, 1, NULL );
+
+    // Transfer control to the RTOS kernel. Does not return under normal operation.
+    vTaskStartScheduler();
+
+    // Execution reaches here only on insufficient heap.
+    for( ;; ) {}
+}
+```
+
+---
+
+### vTaskEndScheduler
+
+Stop the scheduler and return execution to the point after `vTaskStartScheduler()`. All tasks are deleted. Only implemented on desktop (simulator) ports.
+
+```c
+void vTaskEndScheduler( void );
+```
+
+---
+
+### vTaskSuspendAll
+
+Suspend the scheduler without disabling interrupts. Context switches do not occur while the scheduler is suspended. Interrupts continue to fire and the tick count is maintained, but the kernel does not act on them until `xTaskResumeAll()` is called.
+
+Do not call API functions that could cause a context switch (such as `xTaskDelayUntil()` or `xQueueSend()`) while the scheduler is suspended.
+
+```c
+void vTaskSuspendAll( void );
+```
+
+---
+
+### xTaskResumeAll
+
+Resume the scheduler after a call to `vTaskSuspendAll()`. Any pending context switches that were deferred while the scheduler was suspended are performed.
+
+`xTaskResumeAll()` resumes the scheduler only; it does not unsuspend individual tasks that were suspended with `vTaskSuspend()`.
+
+```c
+BaseType_t xTaskResumeAll( void );
+```
+
+<ResponseField name="return" type="BaseType_t">
+  `pdTRUE` if resuming the scheduler triggered a context switch. `pdFALSE` otherwise.
+</ResponseField>
+
+```c example
+void vLongAtomicOperation( void )
+{
+    // Prevent context switches without disabling interrupts.
+    // The tick count continues to advance.
+    vTaskSuspendAll();
+
+    // Perform a lengthy operation that must not be preempted.
+    vCopyLargeBuffer( pDst, pSrc, ulLength );
+
+    // Re-enable context switching. Pending switches are processed here.
+    if( xTaskResumeAll() == pdFALSE )
+    {
+        // No context switch occurred during resume — yield if needed.
+        taskYIELD();
+    }
+}
+```
+
+---
+
+## Critical sections
+
+Critical sections prevent context switches and mask interrupts up to `configMAX_SYSCALL_INTERRUPT_PRIORITY`. They must be kept as short as possible.
+
+### taskENTER_CRITICAL / taskEXIT_CRITICAL
+
+Enter and exit a critical section from task context. Critical sections can be nested; the interrupt mask is restored only when the outermost `taskEXIT_CRITICAL()` is called.
+
+```c
+#define taskENTER_CRITICAL()    portENTER_CRITICAL()
+#define taskEXIT_CRITICAL()     portEXIT_CRITICAL()
+```
+
+```c example
+void vUpdateSharedResource( void )
+{
+    taskENTER_CRITICAL();
+    {
+        // No context switch or masked interrupt can occur here.
+        ulSharedCounter++;
+    }
+    taskEXIT_CRITICAL();
+}
+```
+
+---
+
+### taskENTER_CRITICAL_FROM_ISR / taskEXIT_CRITICAL_FROM_ISR
+
+ISR-safe variants of `taskENTER_CRITICAL()` and `taskEXIT_CRITICAL()`. They return and accept an interrupt mask value, allowing nesting within ISRs.
+
+On single-core ports:
+```c
+#define taskENTER_CRITICAL_FROM_ISR()        portSET_INTERRUPT_MASK_FROM_ISR()
+#define taskEXIT_CRITICAL_FROM_ISR( x )      portCLEAR_INTERRUPT_MASK_FROM_ISR( x )
+```
+
+On SMP ports:
+```c
+#define taskENTER_CRITICAL_FROM_ISR()        portENTER_CRITICAL_FROM_ISR()
+#define taskEXIT_CRITICAL_FROM_ISR( x )      portEXIT_CRITICAL_FROM_ISR( x )
+```
+
+```c example
+void vAnISR( void )
+{
+    UBaseType_t uxSavedInterruptStatus;
+
+    uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
+    {
+        // Access shared data safely within the ISR.
+        ulSharedCounter++;
+    }
+    taskEXIT_CRITICAL_FROM_ISR( uxSavedInterruptStatus );
+}
+```
+
+---
+
+### taskDISABLE_INTERRUPTS / taskENABLE_INTERRUPTS
+
+Disable and re-enable all maskable interrupts. Unlike critical sections, these macros are not nestable. Prefer `taskENTER_CRITICAL()` / `taskEXIT_CRITICAL()` in most cases.
+
+```c
+#define taskDISABLE_INTERRUPTS()    portDISABLE_INTERRUPTS()
+#define taskENABLE_INTERRUPTS()     portENABLE_INTERRUPTS()
+```
+
+---
+
+## Utility macros
+
+### pdMS_TO_TICKS
+
+Convert a time in milliseconds to a tick count, using the tick rate configured in `FreeRTOSConfig.h`.
+
+```c
+#define pdMS_TO_TICKS( xTimeInMs ) \
+    ( ( TickType_t ) ( ( ( TickType_t ) ( xTimeInMs ) * \
+                         ( TickType_t ) configTICK_RATE_HZ ) / \
+                       ( TickType_t ) 1000U ) )
+```
+
+<ParamField path="xTimeInMs" type="TickType_t" required>
+  Time in milliseconds to convert.
+</ParamField>
+
+<ResponseField name="return" type="TickType_t">
+  Equivalent number of RTOS ticks, rounded down to the nearest tick.
+</ResponseField>
+
+```c example
+// Block for exactly 250 ms regardless of the configured tick rate.
+vTaskDelay( pdMS_TO_TICKS( 250 ) );
+
+// Set a 1-second timeout.
+xQueueReceive( xQueue, &xData, pdMS_TO_TICKS( 1000 ) );
+```

@@ -1,0 +1,264 @@
+---
+title: "Event Groups"
+description: "Synchronize multiple tasks using bit-flag event groups with AND/OR waiting logic"
+---
+
+An event group is a set of bit flags stored in an `EventBits_t` value. Each bit can represent an independent event or condition. Tasks can set, clear, and wait for any combination of bits — with either AND logic (all bits must be set) or OR logic (any matching bit suffices).
+
+Unlike a queue or semaphore, an event group does not transfer data. It communicates state: something has happened, and one or more tasks may be interested.
+
+<Note>
+**Available bits per event group.** The number of usable bits depends on `configTICK_TYPE_WIDTH_IN_BITS` in `FreeRTOSConfig.h`. The upper bits are reserved for internal FreeRTOS use:
+
+| `configTICK_TYPE_WIDTH_IN_BITS` | Usable bits |
+|---|---|
+| `TICK_TYPE_WIDTH_16_BITS` (0) | 8 bits (bit 0–7) |
+| `TICK_TYPE_WIDTH_32_BITS` (1) | 24 bits (bit 0–23) |
+| `TICK_TYPE_WIDTH_64_BITS` (2) | 56 bits (bit 0–55) |
+
+On most 32-bit MCUs you have 24 usable bits. Define named constants for each bit position to keep your code readable.
+</Note>
+
+## Creating an event group
+
+```c
+// Dynamic allocation
+EventGroupHandle_t xEventGroupCreate( void );
+
+// Static allocation — no heap required
+EventGroupHandle_t xEventGroupCreateStatic(
+    StaticEventGroup_t *pxEventGroupBuffer
+);
+```
+
+Both return an `EventGroupHandle_t`, or `NULL` on failure (dynamic) / if the buffer is `NULL` (static).
+
+## Setting and clearing bits
+
+```c
+// Set one or more bits (from a task)
+EventBits_t xEventGroupSetBits(
+    EventGroupHandle_t xEventGroup,
+    const EventBits_t  uxBitsToSet
+);
+
+// Clear one or more bits (from a task)
+EventBits_t xEventGroupClearBits(
+    EventGroupHandle_t xEventGroup,
+    const EventBits_t  uxBitsToClear
+);
+
+// Read current bits without modifying them (macro, from a task)
+EventBits_t xEventGroupGetBits( EventGroupHandle_t xEventGroup );
+```
+
+Both `xEventGroupSetBits()` and `xEventGroupClearBits()` return the **value of the event group at the time of the call** (after the operation for set; before the operation for clear).
+
+### ISR variants
+
+Event group operations are not directly ISR-safe because they can unblock an arbitrary number of tasks (a non-deterministic operation). Instead, the ISR variants defer the work to the timer daemon task via the timer queue. This requires `configUSE_TIMERS == 1` and `INCLUDE_xTimerPendFunctionCall == 1`.
+
+```c
+BaseType_t xEventGroupSetBitsFromISR(
+    EventGroupHandle_t  xEventGroup,
+    const EventBits_t   uxBitsToSet,
+    BaseType_t         *pxHigherPriorityTaskWoken
+);
+
+BaseType_t xEventGroupClearBitsFromISR(
+    EventGroupHandle_t  xEventGroup,
+    const EventBits_t   uxBitsToClear
+);
+```
+
+Both return `pdPASS` if the command was posted to the timer queue, `pdFAIL` if the queue was full.
+
+## Waiting for bits
+
+```c
+EventBits_t xEventGroupWaitBits(
+    EventGroupHandle_t xEventGroup,
+    const EventBits_t  uxBitsToWaitFor,  // bitmask of interesting bits
+    const BaseType_t   xClearOnExit,     // pdTRUE: auto-clear on unblock
+    const BaseType_t   xWaitForAllBits,  // pdTRUE: AND logic / pdFALSE: OR
+    TickType_t         xTicksToWait
+);
+```
+
+| Parameter | `pdTRUE` | `pdFALSE` |
+|---|---|---|
+| `xClearOnExit` | Matching bits are cleared automatically when the task unblocks | Bits remain set |
+| `xWaitForAllBits` | AND: all bits in `uxBitsToWaitFor` must be set | OR: any one bit suffices |
+
+The return value is the event group value **at the time the wait condition was met** (before any auto-clear). Compare against `uxBitsToWaitFor` to distinguish timeout (not all bits set) from success.
+
+## Barrier synchronization with `xEventGroupSync()`
+
+`xEventGroupSync()` provides a rendezvous point: a task atomically sets its own bit and then waits until all the specified bits (from all participating tasks) are set.
+
+```c
+EventBits_t xEventGroupSync(
+    EventGroupHandle_t xEventGroup,
+    const EventBits_t  uxBitsToSet,       // this task's "I'm ready" bit
+    const EventBits_t  uxBitsToWaitFor,   // all participants' bits combined
+    TickType_t         xTicksToWait
+);
+```
+
+All bits in `uxBitsToWaitFor` are cleared automatically once the condition is met, making the barrier reusable.
+
+## Cleanup
+
+```c
+void vEventGroupDelete( EventGroupHandle_t xEventGroup );
+```
+
+Tasks blocked on the event group are unblocked and receive 0 as the event value.
+
+## Complete example: multi-hardware rendezvous
+
+Three tasks each wait for independent hardware events, then synchronize at a common point before proceeding to a shared post-processing step.
+
+```c
+#include "FreeRTOS.h"
+#include "event_groups.h"
+
+/* Bit definitions — one per participant */
+#define EVT_ADC_DONE      ( 1UL << 0 )  /* ADC conversion complete  */
+#define EVT_DMA_DONE      ( 1UL << 1 )  /* DMA transfer complete    */
+#define EVT_SENSOR_READY  ( 1UL << 2 )  /* Sensor data available    */
+
+/* Mask of all three bits combined */
+#define EVT_ALL_READY  ( EVT_ADC_DONE | EVT_DMA_DONE | EVT_SENSOR_READY )
+
+static EventGroupHandle_t xHwEventGroup;
+
+/* Task 1: waits for ADC hardware, then signals ready */
+void vAdcTask( void *pvParameters )
+{
+    for( ;; )
+    {
+        WaitForAdcComplete();           /* hardware-specific block */
+
+        /* Rendezvous: set our bit, wait for all three bits */
+        EventBits_t uxResult = xEventGroupSync(
+            xHwEventGroup,
+            EVT_ADC_DONE,               /* set our "ready" bit      */
+            EVT_ALL_READY,              /* wait for everyone        */
+            portMAX_DELAY );
+
+        if( ( uxResult & EVT_ALL_READY ) == EVT_ALL_READY )
+        {
+            /* All three tasks reached the barrier — safe to proceed */
+            ProcessAdcData();
+        }
+    }
+}
+
+/* Task 2: waits for DMA hardware, then signals ready */
+void vDmaTask( void *pvParameters )
+{
+    for( ;; )
+    {
+        WaitForDmaComplete();
+
+        xEventGroupSync( xHwEventGroup,
+                         EVT_DMA_DONE,
+                         EVT_ALL_READY,
+                         portMAX_DELAY );
+
+        ProcessDmaBuffer();
+    }
+}
+
+/* Task 3: waits for a sensor, then signals ready */
+void vSensorTask( void *pvParameters )
+{
+    for( ;; )
+    {
+        WaitForSensorData();
+
+        xEventGroupSync( xHwEventGroup,
+                         EVT_SENSOR_READY,
+                         EVT_ALL_READY,
+                         portMAX_DELAY );
+
+        ProcessSensorData();
+    }
+}
+
+void vStartEventGroupDemo( void )
+{
+    xHwEventGroup = xEventGroupCreate();
+    configASSERT( xHwEventGroup != NULL );
+
+    xTaskCreate( vAdcTask,    "ADC",    256, NULL, 3, NULL );
+    xTaskCreate( vDmaTask,    "DMA",    256, NULL, 3, NULL );
+    xTaskCreate( vSensorTask, "Sensor", 256, NULL, 3, NULL );
+}
+```
+
+### Signaling hardware events from an ISR
+
+```c
+/* Bit definitions same as above */
+static EventGroupHandle_t xHwEventGroup;
+
+void ADC_IRQHandler( void )
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    ADC_ClearFlag();
+
+    /* Request the timer task to set the bit (ISR-safe) */
+    xEventGroupSetBitsFromISR( xHwEventGroup,
+                               EVT_ADC_DONE,
+                               &xHigherPriorityTaskWoken );
+
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+
+/* A task waits for all three hardware events using OR logic first,
+   then checks which combination arrived */
+void vMonitorTask( void *pvParameters )
+{
+    for( ;; )
+    {
+        /* Unblock when ANY of the three bits is set */
+        EventBits_t uxBits = xEventGroupWaitBits(
+            xHwEventGroup,
+            EVT_ALL_READY,  /* bits of interest                 */
+            pdTRUE,         /* clear matched bits on exit       */
+            pdFALSE,        /* OR logic: any bit is sufficient  */
+            portMAX_DELAY );
+
+        if( uxBits & EVT_ADC_DONE )
+        {
+            HandleAdcEvent();
+        }
+        if( uxBits & EVT_DMA_DONE )
+        {
+            HandleDmaEvent();
+        }
+        if( uxBits & EVT_SENSOR_READY )
+        {
+            HandleSensorEvent();
+        }
+    }
+}
+```
+
+## API summary
+
+| Function | Context | Description |
+|---|---|---|
+| `xEventGroupCreate()` | Task | Create event group (dynamic) |
+| `xEventGroupCreateStatic(buf)` | Task | Create event group (static) |
+| `xEventGroupSetBits(eg, bits)` | Task | Set one or more bits |
+| `xEventGroupClearBits(eg, bits)` | Task | Clear one or more bits |
+| `xEventGroupGetBits(eg)` | Task | Read current bits |
+| `xEventGroupSetBitsFromISR(eg, bits, &woken)` | ISR | Set bits via timer task |
+| `xEventGroupClearBitsFromISR(eg, bits)` | ISR | Clear bits via timer task |
+| `xEventGroupWaitBits(eg, mask, clear, all, ticks)` | Task | Block on AND/OR condition |
+| `xEventGroupSync(eg, set, wait, ticks)` | Task | Atomic set-then-wait rendezvous |
+| `vEventGroupDelete(eg)` | Task | Free event group resources |

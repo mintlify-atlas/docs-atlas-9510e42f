@@ -1,0 +1,325 @@
+---
+title: "Tasks"
+description: "Understanding FreeRTOS tasks: creation, states, priorities, stack, and lifecycle"
+---
+
+A task is an independent thread of execution. Each task has its own stack, its own program counter, and runs as if it has sole ownership of the processor. The scheduler decides which task runs at any given moment, switching between them rapidly to create the illusion of concurrency.
+
+Every task is implemented as a C function that never returns. Its general form is:
+
+```c
+void vTaskFunction( void * pvParameters )
+{
+    /* Initialisation code here. */
+
+    for( ;; )
+    {
+        /* Task body — runs repeatedly. */
+    }
+
+    /* A task must never return or exit its implementing function.
+     * In most ports, falling off the end of the function will cause
+     * an assertion failure. Use vTaskDelete( NULL ) to terminate. */
+}
+```
+
+## Task states
+
+Each task is always in one of five states:
+
+```
+                  ┌─────────────┐
+          ┌──────►│    Ready    │◄──────┐
+          │       └──────┬──────┘       │
+          │              │ scheduler    │
+  event / │              │ selects      │ unblocked /
+  timeout │              ▼              │ resumed
+          │       ┌─────────────┐       │
+          └───────│   Running   │───────┘
+                  └──────┬──────┘
+                         │
+              ┌──────────┼──────────┐
+              ▼          ▼          ▼
+       ┌──────────┐ ┌─────────┐ ┌─────────┐
+       │ Blocked  │ │Suspended│ │ Deleted │
+       └──────────┘ └─────────┘ └─────────┘
+```
+
+| State | Description |
+|-------|-------------|
+| **Running** | The task is currently executing on the CPU. Only one task runs at a time on a single-core system. |
+| **Ready** | The task is able to run but is not currently running because a higher- or equal-priority task is running. |
+| **Blocked** | The task is waiting for a temporal event (a delay) or an external event (a queue, semaphore, or notification). A blocked task does not consume CPU time. |
+| **Suspended** | The task has been explicitly suspended with `vTaskSuspend()`. It will not run until `vTaskResume()` is called on it. |
+| **Deleted** | `vTaskDelete()` has been called. The task will not run again. The idle task frees the kernel-allocated memory when it gets CPU time. |
+
+The `eTaskState` enumeration in `task.h` captures these states:
+
+```c
+typedef enum
+{
+    eRunning = 0,  /* A task is querying the state of itself, so must be running. */
+    eReady,        /* The task being queried is in a ready or pending ready list. */
+    eBlocked,      /* The task being queried is in the Blocked state. */
+    eSuspended,    /* The task being queried is in the Suspended state. */
+    eDeleted,      /* The task being queried has been deleted, but its TCB has not yet been freed. */
+    eInvalid       /* Used as an 'invalid state' value. */
+} eTaskState;
+```
+
+## Creating a task
+
+<Steps>
+  <Step title="Write the task function">
+    Implement a function with the `void vName( void * pvParameters )` signature. The function body must loop forever or call `vTaskDelete( NULL )` to terminate itself.
+
+    ```c
+    void vMyTask( void * pvParameters )
+    {
+        /* Cast the parameter if needed. */
+        uint32_t ulValue = ( uint32_t ) pvParameters;
+
+        for( ;; )
+        {
+            /* Task work goes here. */
+        }
+    }
+    ```
+  </Step>
+
+  <Step title="Call xTaskCreate()">
+    Before starting the scheduler, create the task using `xTaskCreate()`:
+
+    ```c
+    BaseType_t xTaskCreate( TaskFunction_t pxTaskCode,
+                            const char * const pcName,
+                            const configSTACK_DEPTH_TYPE uxStackDepth,
+                            void * const pvParameters,
+                            UBaseType_t uxPriority,
+                            TaskHandle_t * const pxCreatedTask );
+    ```
+
+    | Parameter | Description |
+    |-----------|-------------|
+    | `pxTaskCode` | Pointer to the task function. |
+    | `pcName` | Human-readable name for debugging. Max length is `configMAX_TASK_NAME_LEN` (default 16). |
+    | `uxStackDepth` | Stack size in **words**, not bytes. On a 32-bit system, 128 words = 512 bytes. |
+    | `pvParameters` | Value passed to the task function as `pvParameters`. |
+    | `uxPriority` | Priority from `0` (lowest, idle) to `configMAX_PRIORITIES - 1` (highest). |
+    | `pxCreatedTask` | Receives the task handle; pass `NULL` if you do not need it. |
+
+    Returns `pdPASS` on success, or an error code if memory allocation fails.
+  </Step>
+
+  <Step title="Start the scheduler">
+    After creating all initial tasks, call `vTaskStartScheduler()`. This function does not return under normal operation.
+
+    ```c
+    int main( void )
+    {
+        TaskHandle_t xHandle = NULL;
+
+        xTaskCreate( vMyTask,
+                     "MyTask",
+                     128,              /* Stack depth in words. */
+                     ( void * ) 1UL,  /* Parameter. */
+                     tskIDLE_PRIORITY + 1,
+                     &xHandle );
+
+        vTaskStartScheduler();
+
+        /* Will only reach here if there was insufficient heap to create
+         * the idle task or the timer task. */
+        for( ;; );
+    }
+    ```
+  </Step>
+</Steps>
+
+## Static allocation
+
+`xTaskCreateStatic()` lets you provide the stack and TCB buffers yourself, removing the need for any dynamic allocation:
+
+```c
+TaskHandle_t xTaskCreateStatic( TaskFunction_t pxTaskCode,
+                                const char * const pcName,
+                                const configSTACK_DEPTH_TYPE uxStackDepth,
+                                void * const pvParameters,
+                                UBaseType_t uxPriority,
+                                StackType_t * const puxStackBuffer,
+                                StaticTask_t * const pxTaskBuffer );
+```
+
+`configSUPPORT_STATIC_ALLOCATION` must be set to `1` in `FreeRTOSConfig.h`.
+
+```c
+/* Stack and TCB storage — must remain valid for the task's lifetime. */
+#define STACK_SIZE    200
+static StackType_t   xStack[ STACK_SIZE ];
+static StaticTask_t  xTaskBuffer;
+
+void vCreateStaticTask( void )
+{
+    TaskHandle_t xHandle;
+
+    xHandle = xTaskCreateStatic(
+                  vMyTask,         /* Function that implements the task. */
+                  "StaticTask",    /* Text name for the task. */
+                  STACK_SIZE,      /* Stack size in words, not bytes. */
+                  ( void * ) 1,    /* Parameter passed into the task. */
+                  tskIDLE_PRIORITY,
+                  xStack,          /* Array to use as the task's stack. */
+                  &xTaskBuffer );  /* Variable to hold the task's data structure. */
+}
+```
+
+## Task priorities
+
+Priorities are integers in the range `0` to `configMAX_PRIORITIES - 1`.
+
+- `0` (`tskIDLE_PRIORITY`) is the lowest priority — reserved for the idle task.
+- `configMAX_PRIORITIES - 1` is the highest priority.
+- The scheduler always runs the highest-priority task that is in the Ready state.
+
+<Tip>
+Keep the number of distinct priority levels small. A common pattern is three levels: low (background work), medium (application logic), and high (time-critical or communication tasks). Avoid assigning unique priorities to every task unless you have a specific reason — it makes priority analysis harder and offers no benefit when tasks block on I/O.
+</Tip>
+
+Priority can be changed at runtime:
+
+```c
+/* Raise the priority of the calling task. */
+vTaskPrioritySet( NULL, tskIDLE_PRIORITY + 2 );
+
+/* Query the current priority of a task. */
+UBaseType_t uxPriority = uxTaskPriorityGet( xHandle );
+```
+
+## The idle task
+
+The idle task (`"IDLE"`) is created automatically by `vTaskStartScheduler()` at priority `tskIDLE_PRIORITY` (0). It runs whenever no application task is able to run, and it performs two critical functions:
+
+1. **Frees memory** from tasks deleted with `vTaskDelete()`. If the idle task is starved of CPU time, the TCBs and stacks of deleted tasks accumulate in memory.
+2. **Enters a low-power mode** if `configUSE_TICKLESS_IDLE` is enabled.
+
+You can provide an idle hook (`vApplicationIdleHook`) by setting `configUSE_IDLE_HOOK` to `1` to execute background work in the idle task, but the hook must never block or call blocking API functions.
+
+## Deleting a task
+
+```c
+void vTaskDelete( TaskHandle_t xTaskToDelete );
+```
+
+Pass the task's handle to delete another task, or `NULL` to delete the calling task:
+
+```c
+/* Delete a specific task. */
+vTaskDelete( xHandle );
+
+/* Self-deletion — task deletes itself. */
+vTaskDelete( NULL );
+```
+
+`INCLUDE_vTaskDelete` must be set to `1` in `FreeRTOSConfig.h`.
+
+<Warning>
+Memory allocated by the task's own code (e.g. with `pvPortMalloc()`) is **not** freed automatically. Free all heap memory before calling `vTaskDelete()`, or the memory will be permanently lost. The kernel only frees the stack and TCB it allocated internally.
+</Warning>
+
+## Stack sizing and overflow detection
+
+The `uxStackDepth` parameter to `xTaskCreate()` specifies the number of **words** the stack can hold, not bytes. On a 32-bit platform, 128 words = 512 bytes.
+
+`uxTaskGetStackHighWaterMark()` returns the minimum free stack space (in words) that has remained since the task started. A value close to zero means the task has come close to overflowing its stack.
+
+```c
+/* INCLUDE_uxTaskGetStackHighWaterMark must be 1 in FreeRTOSConfig.h. */
+UBaseType_t uxHighWaterMark = uxTaskGetStackHighWaterMark( xHandle );
+
+/* A return value of 0 means the stack has overflowed or come very close. */
+if( uxHighWaterMark < 10 )
+{
+    /* Stack is dangerously low — increase uxStackDepth in xTaskCreate(). */
+}
+```
+
+Enable runtime stack overflow checking by setting `configCHECK_FOR_STACK_OVERFLOW` to `1` or `2` in `FreeRTOSConfig.h`, then provide the hook:
+
+```c
+void vApplicationStackOverflowHook( TaskHandle_t xTask, char * pcTaskName )
+{
+    /* Called when a stack overflow is detected. Log, halt, or reset. */
+    ( void ) xTask;
+    ( void ) pcTaskName;
+    taskDISABLE_INTERRUPTS();
+    for( ;; );
+}
+```
+
+<Warning>
+Always start with a larger stack than you think you need, profile with `uxTaskGetStackHighWaterMark()` under realistic load, then reduce. Stack overflow on bare-metal systems causes silent memory corruption that is very difficult to debug.
+</Warning>
+
+## Example: two tasks with different priorities
+
+```c
+#include "FreeRTOS.h"
+#include "task.h"
+
+/* High-priority task — runs whenever it is in the Ready state. */
+void vHighPriorityTask( void * pvParameters )
+{
+    ( void ) pvParameters;
+
+    for( ;; )
+    {
+        /* Perform time-critical work here. */
+
+        /* Block for 10 ms, releasing the CPU to lower-priority tasks. */
+        vTaskDelay( pdMS_TO_TICKS( 10 ) );
+    }
+}
+
+/* Low-priority task — runs only when the high-priority task is blocked. */
+void vLowPriorityTask( void * pvParameters )
+{
+    ( void ) pvParameters;
+
+    for( ;; )
+    {
+        /* Perform background work here. */
+        vTaskDelay( pdMS_TO_TICKS( 100 ) );
+    }
+}
+
+int main( void )
+{
+    xTaskCreate( vHighPriorityTask, "High", 128, NULL, tskIDLE_PRIORITY + 2, NULL );
+    xTaskCreate( vLowPriorityTask,  "Low",  128, NULL, tskIDLE_PRIORITY + 1, NULL );
+
+    vTaskStartScheduler();
+
+    for( ;; );
+}
+```
+
+## Task notifications
+
+Each task holds a private array of 32-bit notification values (sized by `configTASK_NOTIFICATION_ARRAY_ENTRIES`, default 1). Notifications let tasks signal one another directly without creating a queue or semaphore object, making them faster and cheaper in both RAM and code.
+
+A notification can be sent as a simple signal, a bit-set operation, an increment (counting semaphore equivalent), or a direct value write.
+
+```c
+/* Sender (e.g. from an ISR or another task): increment the notification value,
+ * equivalent to giving a binary semaphore. */
+xTaskNotifyGive( xTaskHandle );
+
+/* Receiver: block until the notification value is non-zero, then decrement it.
+ * Equivalent to taking a binary semaphore. */
+ulTaskNotifyTake( pdTRUE,           /* Clear the notification value on exit. */
+                  portMAX_DELAY );  /* Block indefinitely. */
+```
+
+For more control, use `xTaskNotify()` / `xTaskNotifyWait()` with the `eNotifyAction` values defined in `task.h`: `eNoAction`, `eSetBits`, `eIncrement`, `eSetValueWithOverwrite`, `eSetValueWithoutOverwrite`.
+
+Notifications cannot replace a queue when multiple senders need to queue up distinct values, because a second notification from a different sender can overwrite the first before the receiver processes it. For fan-in patterns, use a queue.

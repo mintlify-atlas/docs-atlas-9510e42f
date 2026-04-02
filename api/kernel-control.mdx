@@ -1,0 +1,323 @@
+---
+title: "Kernel Control API"
+description: "API reference for scheduler control, critical sections, and kernel utilities"
+---
+
+This page covers functions and macros for controlling the FreeRTOS scheduler, entering critical sections, disabling interrupts, and querying kernel state. Functions are declared in `task.h`; heap size functions are declared in `portable.h`.
+
+<Warning>
+  FreeRTOS API functions whose names end in `FromISR` may only be called from interrupt service routines that execute at or below `configMAX_SYSCALL_INTERRUPT_PRIORITY` (the highest interrupt priority from which FreeRTOS API calls are permitted). Calling regular (non-ISR) FreeRTOS API functions from an ISR, or calling ISR API functions from outside an ISR, will corrupt the kernel state and cause unpredictable failures.
+</Warning>
+
+---
+
+## Scheduler control
+
+### vTaskStartScheduler
+
+```c
+void vTaskStartScheduler( void );
+```
+
+Starts the FreeRTOS scheduler. This function does not return under normal operation. Control only returns from `vTaskStartScheduler()` if there is insufficient heap to create the idle task or (if `configUSE_TIMERS == 1`) the timer daemon task.
+
+After this call, the kernel takes control of the CPU. All tasks, timers, and other objects created before the call will begin executing.
+
+---
+
+### vTaskEndScheduler
+
+```c
+void vTaskEndScheduler( void );
+```
+
+Stops the scheduler and returns control to the point where `vTaskStartScheduler()` was called. Only meaningful on ports that support this (typically desktop/simulation ports). On most embedded ports this function is not implemented.
+
+---
+
+### vTaskSuspendAll
+
+```c
+void vTaskSuspendAll( void );
+```
+
+Suspends the scheduler without disabling interrupts. While the scheduler is suspended, no context switch will occur, but ISRs continue to execute. The calling task continues to run.
+
+Calls to `vTaskSuspendAll()` can be nested. The scheduler does not resume until `xTaskResumeAll()` has been called once for each call to `vTaskSuspendAll()`.
+
+<Info>
+  Use `vTaskSuspendAll()` / `xTaskResumeAll()` to create a longer critical section without blocking interrupts. For shorter, interrupt-safe sections use `taskENTER_CRITICAL()` / `taskEXIT_CRITICAL()`.
+</Info>
+
+---
+
+### xTaskResumeAll
+
+```c
+BaseType_t xTaskResumeAll( void );
+```
+
+Resumes the scheduler after a call to `vTaskSuspendAll()`. Any pending context switches are performed upon resumption.
+
+<ResponseField name="return" type="BaseType_t">
+  `pdTRUE` if a context switch occurred when the scheduler was resumed. `pdFALSE` otherwise.
+</ResponseField>
+
+---
+
+## Critical sections
+
+Critical sections disable interrupts up to `configMAX_SYSCALL_INTERRUPT_PRIORITY`, preventing task switches and ISRs from interfering. Keep critical sections as short as possible.
+
+### taskENTER_CRITICAL
+
+```c
+void taskENTER_CRITICAL( void );
+```
+
+Enters a critical section by raising the interrupt mask to `configMAX_SYSCALL_INTERRUPT_PRIORITY`. Calls can be nested; the corresponding `taskEXIT_CRITICAL()` must be called the same number of times.
+
+Must not be called from an ISR. Use `taskENTER_CRITICAL_FROM_ISR()` from an ISR.
+
+---
+
+### taskEXIT_CRITICAL
+
+```c
+void taskEXIT_CRITICAL( void );
+```
+
+Exits a critical section entered with `taskENTER_CRITICAL()`. Restores the interrupt mask when the nesting count reaches zero.
+
+---
+
+### taskENTER_CRITICAL_FROM_ISR
+
+```c
+UBaseType_t taskENTER_CRITICAL_FROM_ISR( void );
+```
+
+ISR-safe version of `taskENTER_CRITICAL()`. Returns the previous interrupt mask value, which must be passed to the matching `taskEXIT_CRITICAL_FROM_ISR()`.
+
+<ResponseField name="return" type="UBaseType_t">
+  Saved interrupt mask to be passed to `taskEXIT_CRITICAL_FROM_ISR()`.
+</ResponseField>
+
+---
+
+### taskEXIT_CRITICAL_FROM_ISR
+
+```c
+void taskEXIT_CRITICAL_FROM_ISR( UBaseType_t uxSavedInterruptStatus );
+```
+
+ISR-safe version of `taskEXIT_CRITICAL()`. Restores the interrupt mask to the value returned by `taskENTER_CRITICAL_FROM_ISR()`.
+
+<ParamField path="uxSavedInterruptStatus" type="UBaseType_t" required>
+  Value returned by the preceding `taskENTER_CRITICAL_FROM_ISR()` call.
+</ParamField>
+
+---
+
+## Full interrupt control
+
+These macros disable and re-enable **all** maskable interrupts. They do not track nesting and should be used sparingly.
+
+### taskDISABLE_INTERRUPTS
+
+```c
+void taskDISABLE_INTERRUPTS( void );
+```
+
+Disables all maskable interrupts. Expands to the port-specific `portDISABLE_INTERRUPTS()`.
+
+---
+
+### taskENABLE_INTERRUPTS
+
+```c
+void taskENABLE_INTERRUPTS( void );
+```
+
+Re-enables interrupts after `taskDISABLE_INTERRUPTS()`. Expands to `portENABLE_INTERRUPTS()`.
+
+---
+
+## Tick count
+
+### xTaskGetTickCount
+
+```c
+TickType_t xTaskGetTickCount( void );
+```
+
+Returns the number of ticks since `vTaskStartScheduler()` was called. Must not be called from an ISR; use `xTaskGetTickCountFromISR()` instead.
+
+<ResponseField name="return" type="TickType_t">
+  Current tick count.
+</ResponseField>
+
+---
+
+### xTaskGetTickCountFromISR
+
+```c
+TickType_t xTaskGetTickCountFromISR( void );
+```
+
+ISR-safe version of `xTaskGetTickCount()`.
+
+<ResponseField name="return" type="TickType_t">
+  Current tick count at the time of the call.
+</ResponseField>
+
+---
+
+## Task statistics
+
+### uxTaskGetNumberOfTasks
+
+```c
+UBaseType_t uxTaskGetNumberOfTasks( void );
+```
+
+Returns the total number of tasks currently under the control of the kernel (in any state: running, ready, blocked, suspended, or deleted but not yet cleaned up).
+
+<ResponseField name="return" type="UBaseType_t">
+  Number of tasks.
+</ResponseField>
+
+---
+
+### vTaskList
+
+```c
+void vTaskList( char *pcWriteBuffer );
+```
+
+Writes a formatted, human-readable table of all tasks to `pcWriteBuffer`. Each row shows task name, state, priority, remaining stack space (in words), and task number.
+
+Requires `configUSE_TRACE_FACILITY == 1` and `configUSE_STATS_FORMATTING_FUNCTIONS == 1`. Has a dependency on `snprintf()`.
+
+<Warning>
+  `vTaskList()` suspends all tasks for the duration of the call to ensure a consistent snapshot. Do not use in time-critical production code.
+</Warning>
+
+<ParamField path="pcWriteBuffer" type="char *" required>
+  Buffer large enough to hold all task information. Allocate `40 * uxTaskGetNumberOfTasks()` bytes as a minimum.
+</ParamField>
+
+---
+
+### vTaskGetRunTimeStats
+
+```c
+void vTaskGetRunTimeStats( char *pcWriteBuffer );
+```
+
+Writes per-task CPU usage statistics (absolute run-time counter and percentage of total run time) to `pcWriteBuffer`.
+
+Requires `configGENERATE_RUN_TIME_STATS == 1`, a port-specific run-time counter, and `configUSE_STATS_FORMATTING_FUNCTIONS == 1`.
+
+<ParamField path="pcWriteBuffer" type="char *" required>
+  Buffer to receive the formatted statistics string.
+</ParamField>
+
+---
+
+## Heap statistics
+
+These functions are declared in `portable.h` and implemented in the selected heap implementation (`heap_1.c` – `heap_5.c`).
+
+### xPortGetFreeHeapSize
+
+```c
+size_t xPortGetFreeHeapSize( void );
+```
+
+Returns the total free heap space currently available. Useful for monitoring fragmentation and peak usage. Not available on `heap_3.c`.
+
+<ResponseField name="return" type="size_t">
+  Number of free bytes remaining in the FreeRTOS heap.
+</ResponseField>
+
+---
+
+### xPortGetMinimumEverFreeHeapSize
+
+```c
+size_t xPortGetMinimumEverFreeHeapSize( void );
+```
+
+Returns the minimum amount of free heap that has existed since `vTaskStartScheduler()` was called ("watermark"). Only available on `heap_4.c` and `heap_5.c`.
+
+<ResponseField name="return" type="size_t">
+  Minimum ever-recorded free heap size in bytes.
+</ResponseField>
+
+---
+
+## Example: critical section usage
+
+```c
+#include "FreeRTOS.h"
+#include "task.h"
+
+/* Shared state accessed by multiple tasks. */
+static volatile uint32_t ulSharedVariable = 0;
+
+void vTaskFunction( void *pvParameters )
+{
+    for( ;; )
+    {
+        /* Enter a critical section to protect the shared variable.
+         * Interrupts up to configMAX_SYSCALL_INTERRUPT_PRIORITY are
+         * disabled for the duration. Keep the section short. */
+        taskENTER_CRITICAL();
+        {
+            ulSharedVariable++;
+        }
+        taskEXIT_CRITICAL();
+
+        vTaskDelay( pdMS_TO_TICKS( 10 ) );
+    }
+}
+
+/* ISR-safe critical section example. */
+void vExampleISR( void )
+{
+    UBaseType_t uxSavedInterruptStatus;
+
+    uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
+    {
+        /* Access shared state safely from within the ISR. */
+        ulSharedVariable++;
+    }
+    taskEXIT_CRITICAL_FROM_ISR( uxSavedInterruptStatus );
+}
+```
+
+---
+
+## Example: monitoring heap usage
+
+```c
+#include "FreeRTOS.h"
+#include "task.h"
+
+void vHeapMonitorTask( void *pvParameters )
+{
+    for( ;; )
+    {
+        size_t xFreeHeap    = xPortGetFreeHeapSize();
+        size_t xMinFreeHeap = xPortGetMinimumEverFreeHeapSize();
+
+        /* Log or assert on heap exhaustion threshold. */
+        configASSERT( xFreeHeap > 512 );
+
+        ( void ) xMinFreeHeap; /* Use for debugging heap watermark. */
+
+        vTaskDelay( pdMS_TO_TICKS( 1000 ) );
+    }
+}
+```

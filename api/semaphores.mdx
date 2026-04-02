@@ -1,0 +1,455 @@
+---
+title: "Semaphore & Mutex API"
+description: "Complete API reference for FreeRTOS semaphores and mutexes"
+---
+
+FreeRTOS semaphores and mutexes are built on the queue mechanism and are declared in `semphr.h`. The handle type is `SemaphoreHandle_t`, which is an alias for `QueueHandle_t`.
+
+```c
+typedef QueueHandle_t SemaphoreHandle_t;
+```
+
+---
+
+## Binary semaphores
+
+Binary semaphores are used for task-to-task or ISR-to-task synchronization. They have no priority inheritance mechanism.
+
+### xSemaphoreCreateBinary
+
+```c
+SemaphoreHandle_t xSemaphoreCreateBinary( void );
+```
+
+Creates a binary semaphore using dynamic memory allocation. The semaphore is created in the **taken** (unavailable) state; it must be given before it can be taken. Requires `configSUPPORT_DYNAMIC_ALLOCATION == 1`.
+
+<ResponseField name="return" type="SemaphoreHandle_t">
+  Handle to the created semaphore, or `NULL` if there was insufficient heap.
+</ResponseField>
+
+---
+
+### xSemaphoreCreateBinaryStatic
+
+```c
+SemaphoreHandle_t xSemaphoreCreateBinaryStatic(
+    StaticSemaphore_t *pxSemaphoreBuffer
+);
+```
+
+Creates a binary semaphore using static memory. Requires `configSUPPORT_STATIC_ALLOCATION == 1`.
+
+<ParamField path="pxSemaphoreBuffer" type="StaticSemaphore_t *" required>
+  Pointer to a `StaticSemaphore_t` variable that will hold the semaphore data structure.
+</ParamField>
+
+<ResponseField name="return" type="SemaphoreHandle_t">
+  Handle to the created semaphore, or `NULL` if `pxSemaphoreBuffer` is `NULL`.
+</ResponseField>
+
+---
+
+## Counting semaphores
+
+Counting semaphores are used for counting events or managing a pool of resources.
+
+### xSemaphoreCreateCounting
+
+```c
+SemaphoreHandle_t xSemaphoreCreateCounting(
+    UBaseType_t uxMaxCount,
+    UBaseType_t uxInitialCount
+);
+```
+
+Creates a counting semaphore using dynamic memory allocation. Requires `configSUPPORT_DYNAMIC_ALLOCATION == 1`.
+
+<ParamField path="uxMaxCount" type="UBaseType_t" required>
+  Maximum value the count can reach. The semaphore cannot be given beyond this count.
+</ParamField>
+
+<ParamField path="uxInitialCount" type="UBaseType_t" required>
+  Initial count value assigned when the semaphore is created.
+</ParamField>
+
+<ResponseField name="return" type="SemaphoreHandle_t">
+  Handle to the created semaphore, or `NULL` on failure.
+</ResponseField>
+
+---
+
+### xSemaphoreCreateCountingStatic
+
+```c
+SemaphoreHandle_t xSemaphoreCreateCountingStatic(
+    UBaseType_t        uxMaxCount,
+    UBaseType_t        uxInitialCount,
+    StaticSemaphore_t *pxSemaphoreBuffer
+);
+```
+
+Creates a counting semaphore using static memory. Requires `configSUPPORT_STATIC_ALLOCATION == 1`.
+
+<ParamField path="uxMaxCount" type="UBaseType_t" required>
+  Maximum count value.
+</ParamField>
+
+<ParamField path="uxInitialCount" type="UBaseType_t" required>
+  Initial count value.
+</ParamField>
+
+<ParamField path="pxSemaphoreBuffer" type="StaticSemaphore_t *" required>
+  Pointer to the static buffer for the semaphore data structure.
+</ParamField>
+
+<ResponseField name="return" type="SemaphoreHandle_t">
+  Handle to the semaphore, or `NULL` if `pxSemaphoreBuffer` is `NULL`.
+</ResponseField>
+
+---
+
+## Mutexes
+
+Mutexes implement priority inheritance, preventing priority inversion. A task that takes a mutex **must** always give it back.
+
+<Warning>
+  Mutex type semaphores must not be used from within interrupt service routines. Use binary semaphores for ISR synchronization instead.
+</Warning>
+
+### xSemaphoreCreateMutex
+
+```c
+SemaphoreHandle_t xSemaphoreCreateMutex( void );
+```
+
+Creates a mutex using dynamic memory allocation. Requires `configUSE_MUTEXES == 1` and `configSUPPORT_DYNAMIC_ALLOCATION == 1`.
+
+<ResponseField name="return" type="SemaphoreHandle_t">
+  Handle to the created mutex, or `NULL` if there was insufficient heap.
+</ResponseField>
+
+---
+
+### xSemaphoreCreateMutexStatic
+
+```c
+SemaphoreHandle_t xSemaphoreCreateMutexStatic(
+    StaticSemaphore_t *pxMutexBuffer
+);
+```
+
+Creates a mutex using static memory. Requires `configUSE_MUTEXES == 1` and `configSUPPORT_STATIC_ALLOCATION == 1`.
+
+<ParamField path="pxMutexBuffer" type="StaticSemaphore_t *" required>
+  Pointer to the static buffer that will hold the mutex data structure.
+</ParamField>
+
+<ResponseField name="return" type="SemaphoreHandle_t">
+  Handle to the created mutex, or `NULL` if `pxMutexBuffer` is `NULL`.
+</ResponseField>
+
+---
+
+## Recursive mutexes
+
+A recursive mutex can be taken multiple times by the same task. It must be given back once for each time it was taken. Requires `configUSE_RECURSIVE_MUTEXES == 1`.
+
+### xSemaphoreCreateRecursiveMutex
+
+```c
+SemaphoreHandle_t xSemaphoreCreateRecursiveMutex( void );
+```
+
+Creates a recursive mutex using dynamic memory allocation.
+
+<ResponseField name="return" type="SemaphoreHandle_t">
+  Handle to the created recursive mutex, or `NULL` on failure.
+</ResponseField>
+
+---
+
+### xSemaphoreCreateRecursiveMutexStatic
+
+```c
+SemaphoreHandle_t xSemaphoreCreateRecursiveMutexStatic(
+    StaticSemaphore_t *pxMutexBuffer
+);
+```
+
+Creates a recursive mutex using static memory.
+
+<ParamField path="pxMutexBuffer" type="StaticSemaphore_t *" required>
+  Pointer to the static buffer for the mutex data structure.
+</ParamField>
+
+<ResponseField name="return" type="SemaphoreHandle_t">
+  Handle to the created recursive mutex, or `NULL` if `pxMutexBuffer` is `NULL`.
+</ResponseField>
+
+---
+
+## Taking and giving (task context)
+
+### xSemaphoreTake
+
+```c
+BaseType_t xSemaphoreTake(
+    SemaphoreHandle_t xSemaphore,
+    TickType_t        xBlockTime
+);
+```
+
+Obtains a semaphore. Works on binary, counting, and mutex semaphores. Must not be used on recursive mutexes. Must not be called from an ISR.
+
+<ParamField path="xSemaphore" type="SemaphoreHandle_t" required>
+  Handle to the semaphore being taken.
+</ParamField>
+
+<ParamField path="xBlockTime" type="TickType_t" required>
+  Maximum ticks to block. Pass `0` to poll without blocking. Pass `portMAX_DELAY` to block indefinitely.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdTRUE` if the semaphore was obtained. `pdFALSE` if the block time expired.
+</ResponseField>
+
+---
+
+### xSemaphoreGive
+
+```c
+BaseType_t xSemaphoreGive( SemaphoreHandle_t xSemaphore );
+```
+
+Releases a semaphore. Must not be used on recursive mutexes. Must not be called from an ISR.
+
+<ParamField path="xSemaphore" type="SemaphoreHandle_t" required>
+  Handle to the semaphore being released.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdTRUE` if the semaphore was released. `pdFALSE` if an error occurred (e.g., the semaphore was not first taken).
+</ResponseField>
+
+---
+
+### xSemaphoreTakeRecursive
+
+```c
+BaseType_t xSemaphoreTakeRecursive(
+    SemaphoreHandle_t xMutex,
+    TickType_t        xBlockTime
+);
+```
+
+Takes a recursive mutex. Only for mutexes created with `xSemaphoreCreateRecursiveMutex()`. Requires `configUSE_RECURSIVE_MUTEXES == 1`.
+
+<ParamField path="xMutex" type="SemaphoreHandle_t" required>
+  Handle to the recursive mutex.
+</ParamField>
+
+<ParamField path="xBlockTime" type="TickType_t" required>
+  Maximum ticks to block. Returns immediately if the calling task already holds the mutex.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdTRUE` if obtained. `pdFALSE` if the block time expired.
+</ResponseField>
+
+---
+
+### xSemaphoreGiveRecursive
+
+```c
+BaseType_t xSemaphoreGiveRecursive( SemaphoreHandle_t xMutex );
+```
+
+Gives a recursive mutex. Each take must be matched by one give. Requires `configUSE_RECURSIVE_MUTEXES == 1`.
+
+<ParamField path="xMutex" type="SemaphoreHandle_t" required>
+  Handle to the recursive mutex.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdTRUE` if the semaphore was given.
+</ResponseField>
+
+---
+
+## Taking and giving (ISR context)
+
+### xSemaphoreGiveFromISR
+
+```c
+BaseType_t xSemaphoreGiveFromISR(
+    SemaphoreHandle_t xSemaphore,
+    BaseType_t       *pxHigherPriorityTaskWoken
+);
+```
+
+Releases a binary or counting semaphore from an ISR. Must not be used on mutex semaphores.
+
+<ParamField path="xSemaphore" type="SemaphoreHandle_t" required>
+  Handle to the semaphore.
+</ParamField>
+
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t *" required>
+  Set to `pdTRUE` if giving the semaphore unblocked a higher-priority task. Initialize to `pdFALSE`. Pass the result to `portYIELD_FROM_ISR()`.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdTRUE` if successful. `errQUEUE_FULL` if the semaphore count was already at maximum.
+</ResponseField>
+
+---
+
+### xSemaphoreTakeFromISR
+
+```c
+BaseType_t xSemaphoreTakeFromISR(
+    SemaphoreHandle_t xSemaphore,
+    BaseType_t       *pxHigherPriorityTaskWoken
+);
+```
+
+Takes a binary or counting semaphore from an ISR. Must not be used on mutex semaphores.
+
+<ParamField path="xSemaphore" type="SemaphoreHandle_t" required>
+  Handle to the semaphore.
+</ParamField>
+
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t *" required>
+  Set to `pdTRUE` if the take caused a higher-priority task to unblock.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdTRUE` if taken. `pdFALSE` if the semaphore was unavailable.
+</ResponseField>
+
+---
+
+## Query and utility
+
+### uxSemaphoreGetCount
+
+```c
+UBaseType_t uxSemaphoreGetCount( SemaphoreHandle_t xSemaphore );
+```
+
+Returns the current count of a semaphore. Returns `1` for an available binary semaphore, `0` for a taken one.
+
+<ParamField path="xSemaphore" type="SemaphoreHandle_t" required>
+  Handle to the semaphore.
+</ParamField>
+
+<ResponseField name="return" type="UBaseType_t">
+  Current count value.
+</ResponseField>
+
+---
+
+### xSemaphoreGetMutexHolder
+
+```c
+TaskHandle_t xSemaphoreGetMutexHolder( SemaphoreHandle_t xMutex );
+```
+
+Returns the handle of the task that currently holds the mutex, or `NULL` if the mutex is available or is not a mutex type. Requires `configUSE_MUTEXES == 1` and `INCLUDE_xSemaphoreGetMutexHolder == 1`.
+
+<ParamField path="xMutex" type="SemaphoreHandle_t" required>
+  Handle to the mutex.
+</ParamField>
+
+<ResponseField name="return" type="TaskHandle_t">
+  Handle of the mutex holder, or `NULL`.
+</ResponseField>
+
+---
+
+### vSemaphoreDelete
+
+```c
+void vSemaphoreDelete( SemaphoreHandle_t xSemaphore );
+```
+
+Deletes a semaphore. Do not delete a mutex that is held by a task.
+
+<ParamField path="xSemaphore" type="SemaphoreHandle_t" required>
+  Handle to the semaphore to delete.
+</ParamField>
+
+---
+
+## Examples
+
+### Binary semaphore ISR pattern
+
+```c
+#include "FreeRTOS.h"
+#include "semphr.h"
+
+static SemaphoreHandle_t xDataReadySemaphore;
+
+/* Called once at startup. */
+void vSetup( void )
+{
+    xDataReadySemaphore = xSemaphoreCreateBinary();
+    configASSERT( xDataReadySemaphore != NULL );
+}
+
+/* ISR: hardware has new data ready. */
+void vDataReadyISR( void )
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    xSemaphoreGiveFromISR( xDataReadySemaphore, &xHigherPriorityTaskWoken );
+
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+
+/* Task: waits for the semaphore then processes data. */
+void vProcessingTask( void *pvParameters )
+{
+    for( ;; )
+    {
+        /* Block indefinitely until the ISR signals data is ready. */
+        xSemaphoreTake( xDataReadySemaphore, portMAX_DELAY );
+
+        /* Safe to access the hardware data here. */
+    }
+}
+```
+
+---
+
+### Mutex protecting a shared resource
+
+```c
+#include "FreeRTOS.h"
+#include "semphr.h"
+
+static SemaphoreHandle_t xUARTMutex;
+static uint32_t ulSharedCounter = 0;
+
+void vSetup( void )
+{
+    xUARTMutex = xSemaphoreCreateMutex();
+    configASSERT( xUARTMutex != NULL );
+}
+
+void vTaskA( void *pvParameters )
+{
+    for( ;; )
+    {
+        if( xSemaphoreTake( xUARTMutex, pdMS_TO_TICKS( 10 ) ) == pdTRUE )
+        {
+            /* Exclusive access to the shared resource. */
+            ulSharedCounter++;
+
+            xSemaphoreGive( xUARTMutex );
+        }
+
+        vTaskDelay( pdMS_TO_TICKS( 100 ) );
+    }
+}
+```

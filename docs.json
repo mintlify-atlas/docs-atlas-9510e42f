@@ -1,122 +1,104 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "FreeRTOS Kernel",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#67c253",
+    "light": "#f2f9ed",
+    "dark": "#0e100f"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/3f345dee-7f13-4613-b333-10b4b210d581.jpg",
+  "logo": {
+    "light": "https://media.brand.dev/80cc9056-22a8-4cbc-8a4e-cf13a85de7b4.png",
+    "dark": "https://media.brand.dev/80cc9056-22a8-4cbc-8a4e-cf13a85de7b4.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/FreeRTOS/FreeRTOS-Kernel"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/FreeRTOS/FreeRTOS-Kernel"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "configuration"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/tasks",
+              "concepts/scheduling",
+              "concepts/memory-management"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Inter-Task Communication",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "communication/queues",
+              "communication/semaphores",
+              "communication/event-groups",
+              "communication/stream-buffers"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Timers & Interrupts",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "timers/software-timers",
+              "timers/interrupt-handling"
+            ]
+          },
+          {
+            "group": "Porting & Integration",
+            "pages": [
+              "porting/overview",
+              "porting/cmake-integration",
+              "porting/freertosconfig"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Task API",
             "pages": [
-              "api-reference/introduction"
+              "api/task-creation",
+              "api/task-control",
+              "api/task-utilities"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Synchronization API",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/queues",
+              "api/semaphores",
+              "api/event-groups",
+              "api/stream-buffers"
+            ]
+          },
+          {
+            "group": "Timer & System API",
+            "pages": [
+              "api/timers",
+              "api/kernel-control"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

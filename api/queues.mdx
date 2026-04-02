@@ -1,0 +1,574 @@
+---
+title: "Queue API"
+description: "Complete API reference for FreeRTOS queues"
+---
+
+Queues are the primary inter-task communication mechanism in FreeRTOS. Items are copied into and out of a queue by value, not by reference. All queue functions are declared in `queue.h`.
+
+**Key types**
+
+```c
+typedef struct QueueDefinition *QueueHandle_t;
+typedef struct QueueDefinition *QueueSetHandle_t;
+typedef struct QueueDefinition *QueueSetMemberHandle_t;
+```
+
+---
+
+## Creation
+
+### xQueueCreate
+
+```c
+QueueHandle_t xQueueCreate(
+    UBaseType_t uxQueueLength,
+    UBaseType_t uxItemSize
+);
+```
+
+Creates a new queue using dynamic memory allocation.
+
+<ParamField path="uxQueueLength" type="UBaseType_t" required>
+  Maximum number of items the queue can hold at any one time.
+</ParamField>
+
+<ParamField path="uxItemSize" type="UBaseType_t" required>
+  Size in bytes of each item. Items are queued by copy, so this many bytes are copied from the item pointer into the queue storage.
+</ParamField>
+
+<ResponseField name="return" type="QueueHandle_t">
+  Handle to the created queue, or `NULL` if there was insufficient heap memory.
+</ResponseField>
+
+---
+
+### xQueueCreateStatic
+
+```c
+QueueHandle_t xQueueCreateStatic(
+    UBaseType_t uxQueueLength,
+    UBaseType_t uxItemSize,
+    uint8_t    *pucQueueStorage,
+    StaticQueue_t *pxQueueBuffer
+);
+```
+
+Creates a new queue using statically allocated memory. Requires `configSUPPORT_STATIC_ALLOCATION == 1`.
+
+<ParamField path="uxQueueLength" type="UBaseType_t" required>
+  Maximum number of items the queue can hold.
+</ParamField>
+
+<ParamField path="uxItemSize" type="UBaseType_t" required>
+  Size in bytes of each item.
+</ParamField>
+
+<ParamField path="pucQueueStorage" type="uint8_t *" required>
+  Pointer to a `uint8_t` array of at least `uxQueueLength * uxItemSize` bytes that will hold the queue items. May be `NULL` if `uxItemSize` is zero.
+</ParamField>
+
+<ParamField path="pxQueueBuffer" type="StaticQueue_t *" required>
+  Pointer to a `StaticQueue_t` variable that will hold the queue data structure.
+</ParamField>
+
+<ResponseField name="return" type="QueueHandle_t">
+  Handle to the created queue. Returns `NULL` only if `pxQueueBuffer` is `NULL`.
+</ResponseField>
+
+---
+
+## Sending (task context)
+
+### xQueueSend
+
+```c
+BaseType_t xQueueSend(
+    QueueHandle_t xQueue,
+    const void   *pvItemToQueue,
+    TickType_t    xTicksToWait
+);
+```
+
+Equivalent to `xQueueSendToBack()`. Posts an item to the back of the queue. Must not be called from an ISR.
+
+<ParamField path="xQueue" type="QueueHandle_t" required>
+  Handle to the queue.
+</ParamField>
+
+<ParamField path="pvItemToQueue" type="const void *" required>
+  Pointer to the item to copy into the queue.
+</ParamField>
+
+<ParamField path="xTicksToWait" type="TickType_t" required>
+  Maximum ticks to block waiting for space. Pass `0` to return immediately if full. Pass `portMAX_DELAY` to block indefinitely (requires `INCLUDE_vTaskSuspend == 1`).
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if the item was posted successfully. `errQUEUE_FULL` if the queue was full and the block time expired.
+</ResponseField>
+
+---
+
+### xQueueSendToBack
+
+```c
+BaseType_t xQueueSendToBack(
+    QueueHandle_t xQueue,
+    const void   *pvItemToQueue,
+    TickType_t    xTicksToWait
+);
+```
+
+Posts an item to the back of the queue. Identical to `xQueueSend()`. Must not be called from an ISR.
+
+Parameters and return value are the same as `xQueueSend()`.
+
+---
+
+### xQueueSendToFront
+
+```c
+BaseType_t xQueueSendToFront(
+    QueueHandle_t xQueue,
+    const void   *pvItemToQueue,
+    TickType_t    xTicksToWait
+);
+```
+
+Posts an item to the **front** of the queue, ahead of all existing items. Must not be called from an ISR.
+
+Parameters and return value are the same as `xQueueSend()`.
+
+---
+
+### xQueueOverwrite
+
+```c
+BaseType_t xQueueOverwrite(
+    QueueHandle_t xQueue,
+    const void   *pvItemToQueue
+);
+```
+
+Posts an item to a queue of length one, overwriting any existing value. Use for queues that act as "last known value" holders. Must not be called from an ISR.
+
+<ParamField path="xQueue" type="QueueHandle_t" required>
+  Handle to the queue. Must have been created with a length of one.
+</ParamField>
+
+<ParamField path="pvItemToQueue" type="const void *" required>
+  Pointer to the item to copy into the queue.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  Always returns `pdPASS`.
+</ResponseField>
+
+---
+
+## Receiving (task context)
+
+### xQueueReceive
+
+```c
+BaseType_t xQueueReceive(
+    QueueHandle_t xQueue,
+    void         *pvBuffer,
+    TickType_t    xTicksToWait
+);
+```
+
+Receives an item from a queue, removing it. Must not be called from an ISR.
+
+<ParamField path="xQueue" type="QueueHandle_t" required>
+  Handle to the queue.
+</ParamField>
+
+<ParamField path="pvBuffer" type="void *" required>
+  Pointer to the buffer into which the received item will be copied. Must be at least `uxItemSize` bytes large.
+</ParamField>
+
+<ParamField path="xTicksToWait" type="TickType_t" required>
+  Maximum ticks to block waiting for an item if the queue is empty.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if an item was received. `errQUEUE_EMPTY` if the block time expired without an item being available.
+</ResponseField>
+
+---
+
+### xQueuePeek
+
+```c
+BaseType_t xQueuePeek(
+    QueueHandle_t xQueue,
+    void * const  pvBuffer,
+    TickType_t    xTicksToWait
+);
+```
+
+Reads an item from the queue **without** removing it. Must not be called from an ISR.
+
+Parameters and return value are the same as `xQueueReceive()`.
+
+---
+
+## Sending (ISR context)
+
+### xQueueSendFromISR
+
+```c
+BaseType_t xQueueSendFromISR(
+    QueueHandle_t xQueue,
+    const void   *pvItemToQueue,
+    BaseType_t   *pxHigherPriorityTaskWoken
+);
+```
+
+Posts an item to the back of a queue from an ISR.
+
+<ParamField path="xQueue" type="QueueHandle_t" required>
+  Handle to the queue.
+</ParamField>
+
+<ParamField path="pvItemToQueue" type="const void *" required>
+  Pointer to the item to copy into the queue.
+</ParamField>
+
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t *" required>
+  Set to `pdTRUE` by the function if sending unblocked a task of higher priority than the currently executing task. Initialize to `pdFALSE` before the call. Pass the result to `portYIELD_FROM_ISR()`.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if the item was posted. `errQUEUE_FULL` if the queue was full.
+</ResponseField>
+
+---
+
+### xQueueSendToBackFromISR
+
+```c
+BaseType_t xQueueSendToBackFromISR(
+    QueueHandle_t xQueue,
+    const void   *pvItemToQueue,
+    BaseType_t   *pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xQueueSendToBack()`. Parameters and return value identical to `xQueueSendFromISR()`.
+
+---
+
+### xQueueSendToFrontFromISR
+
+```c
+BaseType_t xQueueSendToFrontFromISR(
+    QueueHandle_t xQueue,
+    const void   *pvItemToQueue,
+    BaseType_t   *pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xQueueSendToFront()`. Parameters and return value identical to `xQueueSendFromISR()`.
+
+---
+
+### xQueueOverwriteFromISR
+
+```c
+BaseType_t xQueueOverwriteFromISR(
+    QueueHandle_t xQueue,
+    const void   *pvItemToQueue,
+    BaseType_t   *pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xQueueOverwrite()`. Always succeeds. Parameters and return value identical to `xQueueSendFromISR()`.
+
+---
+
+## Receiving (ISR context)
+
+### xQueueReceiveFromISR
+
+```c
+BaseType_t xQueueReceiveFromISR(
+    QueueHandle_t xQueue,
+    void         *pvBuffer,
+    BaseType_t   *pxHigherPriorityTaskWoken
+);
+```
+
+Receives an item from a queue from within an ISR.
+
+<ParamField path="xQueue" type="QueueHandle_t" required>
+  Handle to the queue.
+</ParamField>
+
+<ParamField path="pvBuffer" type="void *" required>
+  Buffer into which the received item is copied.
+</ParamField>
+
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t *" required>
+  Set to `pdTRUE` if receiving freed space and thereby unblocked a higher-priority task. Initialize to `pdFALSE`.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if an item was received. `pdFAIL` if the queue was empty.
+</ResponseField>
+
+---
+
+### xQueuePeekFromISR
+
+```c
+BaseType_t xQueuePeekFromISR(
+    QueueHandle_t xQueue,
+    void * const  pvBuffer
+);
+```
+
+Reads an item from a queue without removing it. ISR-safe version of `xQueuePeek()`.
+
+<ParamField path="xQueue" type="QueueHandle_t" required>
+  Handle to the queue.
+</ParamField>
+
+<ParamField path="pvBuffer" type="void * const" required>
+  Buffer into which the peeked item is copied.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if an item was read. `pdFAIL` if the queue was empty.
+</ResponseField>
+
+---
+
+## Query functions
+
+### uxQueueMessagesWaiting
+
+```c
+UBaseType_t uxQueueMessagesWaiting( const QueueHandle_t xQueue );
+```
+
+Returns the number of items currently in the queue. Not ISR-safe; use `uxQueueMessagesWaitingFromISR()` from an ISR.
+
+<ParamField path="xQueue" type="const QueueHandle_t" required>
+  Handle to the queue being queried.
+</ParamField>
+
+<ResponseField name="return" type="UBaseType_t">
+  Number of items in the queue.
+</ResponseField>
+
+---
+
+### uxQueueMessagesWaitingFromISR
+
+```c
+UBaseType_t uxQueueMessagesWaitingFromISR( const QueueHandle_t xQueue );
+```
+
+ISR-safe version of `uxQueueMessagesWaiting()`. Same parameter and return type.
+
+---
+
+### uxQueueSpacesAvailable
+
+```c
+UBaseType_t uxQueueSpacesAvailable( const QueueHandle_t xQueue );
+```
+
+Returns the number of free slots in the queue.
+
+<ParamField path="xQueue" type="const QueueHandle_t" required>
+  Handle to the queue being queried.
+</ParamField>
+
+<ResponseField name="return" type="UBaseType_t">
+  Number of additional items that can be sent before the queue is full.
+</ResponseField>
+
+---
+
+## Deletion
+
+### vQueueDelete
+
+```c
+void vQueueDelete( QueueHandle_t xQueue );
+```
+
+Deletes a queue and frees any dynamically allocated memory.
+
+<ParamField path="xQueue" type="QueueHandle_t" required>
+  Handle to the queue to delete.
+</ParamField>
+
+---
+
+## Queue sets
+
+Queue sets allow a task to block on multiple queues or semaphores simultaneously. Requires `configUSE_QUEUE_SETS == 1`.
+
+### xQueueCreateSet
+
+```c
+QueueSetHandle_t xQueueCreateSet( const UBaseType_t uxEventQueueLength );
+```
+
+<ParamField path="uxEventQueueLength" type="const UBaseType_t" required>
+  Maximum number of events the set can hold at once. Set this to the sum of the lengths of all queues and semaphores that will be added to the set.
+</ParamField>
+
+<ResponseField name="return" type="QueueSetHandle_t">
+  Handle to the created queue set, or `NULL` on failure.
+</ResponseField>
+
+---
+
+### xQueueAddToSet
+
+```c
+BaseType_t xQueueAddToSet(
+    QueueSetMemberHandle_t xQueueOrSemaphore,
+    QueueSetHandle_t       xQueueSet
+);
+```
+
+<ParamField path="xQueueOrSemaphore" type="QueueSetMemberHandle_t" required>
+  Handle to the queue or semaphore being added.
+</ParamField>
+
+<ParamField path="xQueueSet" type="QueueSetHandle_t" required>
+  Handle to the queue set.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` on success. `pdFAIL` if the queue is already a member of a different set.
+</ResponseField>
+
+---
+
+### xQueueRemoveFromSet
+
+```c
+BaseType_t xQueueRemoveFromSet(
+    QueueSetMemberHandle_t xQueueOrSemaphore,
+    QueueSetHandle_t       xQueueSet
+);
+```
+
+Removes a queue or semaphore from a set. The queue or semaphore must be empty.
+
+<ParamField path="xQueueOrSemaphore" type="QueueSetMemberHandle_t" required>
+  Handle to the queue or semaphore being removed.
+</ParamField>
+
+<ParamField path="xQueueSet" type="QueueSetHandle_t" required>
+  Handle to the queue set.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` on success. `pdFAIL` if the queue was not in the set or was not empty.
+</ResponseField>
+
+---
+
+### xQueueSelectFromSet
+
+```c
+QueueSetMemberHandle_t xQueueSelectFromSet(
+    QueueSetHandle_t xQueueSet,
+    const TickType_t xTicksToWait
+);
+```
+
+Blocks until one of the queues or semaphores in the set has data or is available, then returns the handle of the ready member. You **must** then call `xQueueReceive()` or `xSemaphoreTake()` on the returned handle.
+
+<ParamField path="xQueueSet" type="QueueSetHandle_t" required>
+  Handle to the queue set to select from.
+</ParamField>
+
+<ParamField path="xTicksToWait" type="const TickType_t" required>
+  Maximum ticks to block waiting for a member to become ready.
+</ParamField>
+
+<ResponseField name="return" type="QueueSetMemberHandle_t">
+  Handle of a ready queue or semaphore, or `NULL` if the block time expired.
+</ResponseField>
+
+---
+
+### xQueueSelectFromSetFromISR
+
+```c
+QueueSetMemberHandle_t xQueueSelectFromSetFromISR( QueueSetHandle_t xQueueSet );
+```
+
+ISR-safe version of `xQueueSelectFromSet()`. Does not block.
+
+<ParamField path="xQueueSet" type="QueueSetHandle_t" required>
+  Handle to the queue set.
+</ParamField>
+
+<ResponseField name="return" type="QueueSetMemberHandle_t">
+  Handle of a ready member, or `NULL` if none is ready.
+</ResponseField>
+
+---
+
+## Example: passing a struct between tasks
+
+```c
+#include "FreeRTOS.h"
+#include "queue.h"
+
+/* Define the message type. */
+typedef struct {
+    uint32_t ulSensorID;
+    int32_t  lReading;
+} SensorReading_t;
+
+static QueueHandle_t xSensorQueue;
+
+/* Producer task: reads a sensor and enqueues the result. */
+void vProducerTask( void *pvParameters )
+{
+    SensorReading_t xReading;
+
+    xSensorQueue = xQueueCreate( 10, sizeof( SensorReading_t ) );
+    configASSERT( xSensorQueue != NULL );
+
+    for( ;; )
+    {
+        xReading.ulSensorID = 1;
+        xReading.lReading   = 2345; /* Replace with real sensor read. */
+
+        /* Block up to 100 ms waiting for space. */
+        if( xQueueSend( xSensorQueue, &xReading, pdMS_TO_TICKS( 100 ) ) != pdPASS )
+        {
+            /* Queue was full; handle the error. */
+        }
+
+        vTaskDelay( pdMS_TO_TICKS( 500 ) );
+    }
+}
+
+/* Consumer task: dequeues and processes readings. */
+void vConsumerTask( void *pvParameters )
+{
+    SensorReading_t xReading;
+
+    for( ;; )
+    {
+        /* Block indefinitely until a reading arrives. */
+        if( xQueueReceive( xSensorQueue, &xReading, portMAX_DELAY ) == pdPASS )
+        {
+            /* Process xReading.ulSensorID and xReading.lReading here. */
+        }
+    }
+}
+```

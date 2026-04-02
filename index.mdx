@@ -1,97 +1,90 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "FreeRTOS Kernel"
+description: "A real-time operating system kernel for microcontrollers and small microprocessors, providing preemptive multitasking, inter-task communication, and memory management for embedded systems."
 ---
 
-## Setting up
+The FreeRTOS Kernel is a market-leading real-time operating system (RTOS) for microcontrollers and small microprocessors. It is freely available under the MIT license and provides the essential building blocks for reliable, deterministic embedded applications.
 
-Get your documentation site up and running in minutes.
+## Get started
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Learn what FreeRTOS Kernel is, when to use it, and how it compares to bare-metal programming.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Integrate FreeRTOS Kernel into your project using CMake FetchContent or git submodule.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Configuration" icon="sliders" href="/configuration">
+    Configure the kernel behavior with FreeRTOSConfig.h to match your hardware and requirements.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/task-creation">
+    Browse the full API reference for tasks, queues, semaphores, timers, and more.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Core features
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Tasks & Scheduling" icon="layer-group" href="/concepts/tasks">
+    Preemptive and cooperative multitasking with priority-based scheduling and time slicing.
+  </Card>
+  <Card title="Queues & Semaphores" icon="arrows-left-right" href="/communication/queues">
+    Thread-safe inter-task communication using queues, semaphores, and mutexes.
+  </Card>
+  <Card title="Software Timers" icon="clock" href="/timers/software-timers">
+    One-shot and auto-reload software timers executed in the context of a dedicated timer task.
+  </Card>
+  <Card title="Event Groups" icon="flag" href="/communication/event-groups">
+    Synchronize multiple tasks using bit-flag event groups with optional AND/OR waiting logic.
+  </Card>
+  <Card title="Stream Buffers" icon="wave-square" href="/communication/stream-buffers">
+    Lightweight byte-stream and message-buffer primitives optimized for ISR-to-task data flow.
+  </Card>
+  <Card title="Memory Management" icon="memory" href="/concepts/memory-management">
+    Five heap implementations from fixed-size (heap_1) to fully coalescing allocators (heap_4/5).
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Quick integration
 
-## Need inspiration?
+Add FreeRTOS Kernel to your CMake project in two steps:
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+```cmake CMakeLists.txt
+include(FetchContent)
+
+FetchContent_Declare(
+  freertos_kernel
+  GIT_REPOSITORY https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+  GIT_TAG        V11.1.0
+)
+
+# Define the config library before calling MakeAvailable
+add_library(freertos_config INTERFACE)
+target_include_directories(freertos_config SYSTEM INTERFACE include)
+
+set(FREERTOS_HEAP "4" CACHE STRING "" FORCE)
+set(FREERTOS_PORT "GCC_ARM_CM4F" CACHE STRING "" FORCE)
+
+FetchContent_MakeAvailable(freertos_kernel)
+```
+
+Then link your application:
+
+```cmake
+target_link_libraries(my_app PRIVATE freertos_kernel)
+```
+
+<Note>
+Replace `GCC_ARM_CM4F` with the port that matches your target hardware. See the [porting overview](/porting/overview) for a full list of supported architectures.
+</Note>
+
+## Key facts
+
+| Property | Value |
+|---|---|
+| Version | V11.1.0 (FreeRTOS 202406.00 LTS) |
+| License | MIT |
+| Language | C (C99 compatible) |
+| Minimum RAM | ~6 KB (configuration-dependent) |
+| Architectures | ARM Cortex-M/R/A, RISC-V, AVR, PPC, x86, and 60+ more |
+| Build systems | CMake, Make, IDE project files |

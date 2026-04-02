@@ -1,0 +1,559 @@
+---
+title: 'Task Control API'
+description: 'API reference for controlling task execution: delay, suspend, resume, priority, and notifications'
+---
+
+Functions for blocking, suspending, and resuming tasks, adjusting priorities at runtime, and sending or receiving direct-to-task notifications. Include `task.h` in your source files.
+
+---
+
+## Delay functions
+
+### vTaskDelay
+
+Block the calling task for a specified number of ticks, measured relative to when `vTaskDelay()` is called.
+
+Requires `INCLUDE_vTaskDelay == 1`.
+
+```c
+void vTaskDelay( const TickType_t xTicksToDelay );
+```
+
+<ParamField path="xTicksToDelay" type="const TickType_t" required>
+  Number of tick periods to block. Use `pdMS_TO_TICKS()` to convert milliseconds to ticks.
+</ParamField>
+
+<Info>
+  `vTaskDelay()` blocks relative to the call point. If the task body takes variable time, the effective period will drift. Use `xTaskDelayUntil()` for fixed-frequency periodic tasks.
+</Info>
+
+```c example
+void vBlinkTask( void *pvParameters )
+{
+    // Block for 500 ms between toggles.
+    const TickType_t xDelay = pdMS_TO_TICKS( 500 );
+
+    for( ;; )
+    {
+        vToggleLED();
+        vTaskDelay( xDelay );
+    }
+}
+```
+
+---
+
+### xTaskDelayUntil
+
+Block the calling task until an absolute tick count is reached, enabling fixed-frequency periodic execution regardless of the time spent in the task body.
+
+Requires `INCLUDE_xTaskDelayUntil == 1`.
+
+```c
+BaseType_t xTaskDelayUntil(
+    TickType_t * const pxPreviousWakeTime,
+    const TickType_t xTimeIncrement
+);
+```
+
+<ParamField path="pxPreviousWakeTime" type="TickType_t * const" required>
+  Pointer to a variable holding the tick count at which the task last unblocked. Initialise it with `xTaskGetTickCount()` before the first call. The kernel updates it automatically on each call.
+</ParamField>
+
+<ParamField path="xTimeIncrement" type="const TickType_t" required>
+  The desired cycle period in ticks. The task unblocks at `*pxPreviousWakeTime + xTimeIncrement`.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdTRUE` if the task was delayed. `pdFALSE` if the next wake time was already in the past — the task did not block and the periodic schedule continues from the next future deadline.
+</ResponseField>
+
+```c example
+void vPeriodicTask( void *pvParameters )
+{
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xPeriod  = pdMS_TO_TICKS( 100 );
+
+    for( ;; )
+    {
+        // Do work here. Time spent here is accounted for by xTaskDelayUntil.
+        vDoPeriodicWork();
+
+        // Block until the next 100 ms boundary.
+        xTaskDelayUntil( &xLastWakeTime, xPeriod );
+    }
+}
+```
+
+---
+
+## Suspend and resume functions
+
+### vTaskSuspend
+
+Suspend a task indefinitely. A suspended task is never scheduled regardless of its priority. `vTaskSuspend()` calls do not accumulate — a single `vTaskResume()` is sufficient to unsuspend.
+
+Requires `INCLUDE_vTaskSuspend == 1`.
+
+```c
+void vTaskSuspend( TaskHandle_t xTaskToSuspend );
+```
+
+<ParamField path="xTaskToSuspend" type="TaskHandle_t" required>
+  Handle of the task to suspend. Pass `NULL` to suspend the calling task.
+</ParamField>
+
+---
+
+### vTaskResume
+
+Resume a task that was suspended with `vTaskSuspend()`. One call to `vTaskResume()` is sufficient regardless of how many times `vTaskSuspend()` was called.
+
+Requires `INCLUDE_vTaskSuspend == 1`.
+
+```c
+void vTaskResume( TaskHandle_t xTaskToResume );
+```
+
+<ParamField path="xTaskToResume" type="TaskHandle_t" required>
+  Handle of the task to resume.
+</ParamField>
+
+```c example
+static TaskHandle_t xWorkerHandle = NULL;
+
+void vCreateAndControl( void )
+{
+    xTaskCreate( vWorkerTask, "Worker", 256, NULL, 2, &xWorkerHandle );
+
+    // Suspend the worker — it will receive no CPU time.
+    vTaskSuspend( xWorkerHandle );
+
+    vDoSomethingElse();
+
+    // Resume the worker.
+    vTaskResume( xWorkerHandle );
+}
+```
+
+---
+
+### xTaskResumeFromISR
+
+Resume a suspended task from within an interrupt service routine.
+
+Requires `INCLUDE_xTaskResumeFromISR == 1`.
+
+```c
+BaseType_t xTaskResumeFromISR( TaskHandle_t xTaskToResume );
+```
+
+<ParamField path="xTaskToResume" type="TaskHandle_t" required>
+  Handle of the suspended task to resume.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdTRUE` if resuming the task should result in a context switch (the resumed task has higher priority than the task that was interrupted). The ISR should request a context switch before exiting. `pdFALSE` otherwise.
+</ResponseField>
+
+<Warning>
+  Do not use `xTaskResumeFromISR()` to synchronise a task with an interrupt if the interrupt can fire before the task calls `vTaskSuspend()`. That race condition causes the notification to be lost. Use a semaphore instead.
+</Warning>
+
+```c example
+void vAnISR( void )
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    // Resume the suspended task.
+    xHigherPriorityTaskWoken = xTaskResumeFromISR( xWorkerHandle );
+
+    // If the resumed task has higher priority, request a context switch.
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+```
+
+---
+
+## Priority functions
+
+### vTaskPrioritySet
+
+Change the priority of a task at runtime. If the new priority is higher than the currently running task, a context switch occurs before the function returns.
+
+Requires `INCLUDE_vTaskPrioritySet == 1`.
+
+```c
+void vTaskPrioritySet(
+    TaskHandle_t xTask,
+    UBaseType_t uxNewPriority
+);
+```
+
+<ParamField path="xTask" type="TaskHandle_t" required>
+  Handle of the task to modify. Pass `NULL` to change the calling task's priority.
+</ParamField>
+
+<ParamField path="uxNewPriority" type="UBaseType_t" required>
+  New priority value. Must be in the range `[0, configMAX_PRIORITIES - 1]`.
+</ParamField>
+
+---
+
+### uxTaskPriorityGet
+
+Return the current priority of any task.
+
+Requires `INCLUDE_uxTaskPriorityGet == 1`.
+
+```c
+UBaseType_t uxTaskPriorityGet( const TaskHandle_t xTask );
+```
+
+<ParamField path="xTask" type="const TaskHandle_t" required>
+  Handle of the task to query. Pass `NULL` to query the calling task's priority.
+</ParamField>
+
+<ResponseField name="return" type="UBaseType_t">
+  The current priority of the specified task.
+</ResponseField>
+
+```c example
+void vAdjustPriority( TaskHandle_t xHandle )
+{
+    UBaseType_t uxCurrent = uxTaskPriorityGet( xHandle );
+
+    if( uxCurrent < ( tskIDLE_PRIORITY + 2 ) )
+    {
+        // Raise priority.
+        vTaskPrioritySet( xHandle, tskIDLE_PRIORITY + 2 );
+    }
+}
+```
+
+---
+
+## Task notification functions
+
+Each task maintains an array of 32-bit notification values (indexed 0 to `configTASK_NOTIFICATION_ARRAY_ENTRIES - 1`). The legacy single-notification API always targets index 0.
+
+### xTaskNotify / xTaskNotifyIndexed
+
+Send a direct-to-task notification with an optional value and action. Can replace lightweight semaphores and event flags without an intermediary object.
+
+Requires `configUSE_TASK_NOTIFICATIONS` undefined or `== 1`.
+
+```c
+// Index 0 (legacy, backward-compatible)
+#define xTaskNotify( xTaskToNotify, ulValue, eAction )
+
+// Explicit index
+#define xTaskNotifyIndexed( xTaskToNotify, uxIndexToNotify, ulValue, eAction )
+```
+
+Both macros expand to `xTaskGenericNotify()`:
+
+```c
+BaseType_t xTaskGenericNotify(
+    TaskHandle_t xTaskToNotify,
+    UBaseType_t uxIndexToNotify,
+    uint32_t ulValue,
+    eNotifyAction eAction,
+    uint32_t * pulPreviousNotificationValue
+);
+```
+
+<ParamField path="xTaskToNotify" type="TaskHandle_t" required>
+  Handle of the task to notify.
+</ParamField>
+
+<ParamField path="uxIndexToNotify" type="UBaseType_t" required>
+  Index within the target task's notification array. Must be less than `configTASK_NOTIFICATION_ARRAY_ENTRIES`. `xTaskNotify()` always uses index 0.
+</ParamField>
+
+<ParamField path="ulValue" type="uint32_t" required>
+  Value associated with the notification. Its effect depends on `eAction`.
+</ParamField>
+
+<ParamField path="eAction" type="eNotifyAction" required>
+  How the notification value is updated:
+
+  - `eNoAction` — notify without changing the value.
+  - `eSetBits` — bitwise OR `ulValue` into the notification value.
+  - `eIncrement` — increment the notification value; `ulValue` is ignored.
+  - `eSetValueWithOverwrite` — set the notification value to `ulValue` unconditionally.
+  - `eSetValueWithoutOverwrite` — set `ulValue` only if no notification is already pending; returns `pdFAIL` otherwise.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` for all actions except `eSetValueWithoutOverwrite`, which returns `pdFAIL` when the target already has a pending notification.
+</ResponseField>
+
+---
+
+### xTaskNotifyWait / xTaskNotifyWaitIndexed
+
+Wait (optionally blocking) for a notification to arrive at a given index.
+
+```c
+// Index 0
+#define xTaskNotifyWait( ulBitsToClearOnEntry, ulBitsToClearOnExit, \
+                         pulNotificationValue, xTicksToWait )
+
+// Explicit index
+#define xTaskNotifyWaitIndexed( uxIndexToWaitOn, ulBitsToClearOnEntry, \
+                                ulBitsToClearOnExit, pulNotificationValue, \
+                                xTicksToWait )
+```
+
+Both expand to `xTaskGenericNotifyWait()`:
+
+```c
+BaseType_t xTaskGenericNotifyWait(
+    UBaseType_t uxIndexToWaitOn,
+    uint32_t ulBitsToClearOnEntry,
+    uint32_t ulBitsToClearOnExit,
+    uint32_t * pulNotificationValue,
+    TickType_t xTicksToWait
+);
+```
+
+<ParamField path="uxIndexToWaitOn" type="UBaseType_t" required>
+  Index in the notification array to wait on. `xTaskNotifyWait()` always uses index 0.
+</ParamField>
+
+<ParamField path="ulBitsToClearOnEntry" type="uint32_t" required>
+  Bits to clear in the notification value before checking for a pending notification. Use `0xFFFFFFFF` to reset the value to zero on entry.
+</ParamField>
+
+<ParamField path="ulBitsToClearOnExit" type="uint32_t" required>
+  Bits to clear after a notification is received. Use `0xFFFFFFFF` to reset the value to zero after reading. The value output via `pulNotificationValue` reflects the state before this clearing.
+</ParamField>
+
+<ParamField path="pulNotificationValue" type="uint32_t *">
+  Output pointer for the notification value (captured before the exit mask is applied). Pass `NULL` if the value is not needed.
+</ParamField>
+
+<ParamField path="xTicksToWait" type="TickType_t" required>
+  Maximum ticks to block waiting. Use `portMAX_DELAY` to block indefinitely (requires `INCLUDE_vTaskSuspend == 1`).
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  `pdPASS` if a notification was received. `pdFAIL` if the timeout expired before a notification arrived.
+</ResponseField>
+
+---
+
+### xTaskNotifyFromISR / xTaskNotifyIndexedFromISR
+
+ISR-safe version of `xTaskNotify()` / `xTaskNotifyIndexed()`.
+
+```c
+// Index 0
+#define xTaskNotifyFromISR( xTaskToNotify, ulValue, eAction, \
+                            pxHigherPriorityTaskWoken )
+
+// Explicit index
+#define xTaskNotifyIndexedFromISR( xTaskToNotify, uxIndexToNotify, ulValue, \
+                                   eAction, pxHigherPriorityTaskWoken )
+```
+
+<ParamField path="xTaskToNotify" type="TaskHandle_t" required>
+  Handle of the task to notify.
+</ParamField>
+
+<ParamField path="uxIndexToNotify" type="UBaseType_t" required>
+  Notification array index. `xTaskNotifyFromISR()` always uses index 0.
+</ParamField>
+
+<ParamField path="ulValue" type="uint32_t" required>
+  Notification value. Interpretation is controlled by `eAction`.
+</ParamField>
+
+<ParamField path="eAction" type="eNotifyAction" required>
+  Same action semantics as `xTaskNotify()`.
+</ParamField>
+
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t *" required>
+  Set to `pdTRUE` if the notification unblocked a task with higher priority than the interrupted task. The ISR should call `portYIELD_FROM_ISR()` before exiting in this case.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  Same as `xTaskNotify()`.
+</ResponseField>
+
+```c example
+// ISR that notifies a processing task when data is ready.
+void vDataReadyISR( void )
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    xTaskNotifyFromISR(
+        xProcessingTaskHandle,
+        0x01,         // Set bit 0.
+        eSetBits,
+        &xHigherPriorityTaskWoken
+    );
+
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+
+// Processing task waits for the notification bit.
+void vProcessingTask( void *pvParameters )
+{
+    uint32_t ulNotifiedValue;
+
+    for( ;; )
+    {
+        // Block indefinitely until bit 0 is set.
+        xTaskNotifyWait(
+            0x00,              // Don't clear bits on entry.
+            0xFFFFFFFF,        // Clear all bits on exit.
+            &ulNotifiedValue,
+            portMAX_DELAY
+        );
+
+        if( ulNotifiedValue & 0x01 )
+        {
+            vHandleDataReady();
+        }
+    }
+}
+```
+
+---
+
+### xTaskNotifyGive / xTaskNotifyGiveIndexed
+
+Increment a task's notification value from task context, equivalent to giving a counting semaphore. Pairs with `ulTaskNotifyTake()` for lightweight binary or counting semaphore patterns without creating a semaphore object.
+
+```c
+// Index 0
+#define xTaskNotifyGive( xTaskToNotify )
+
+// Explicit index
+#define xTaskNotifyGiveIndexed( xTaskToNotify, uxIndexToNotify )
+```
+
+Both expand to `xTaskGenericNotify()` with `eAction = eIncrement`.
+
+<ParamField path="xTaskToNotify" type="TaskHandle_t" required>
+  Handle of the task whose notification value to increment.
+</ParamField>
+
+<ParamField path="uxIndexToNotify" type="UBaseType_t" required>
+  Notification array index. `xTaskNotifyGive()` always uses index 0.
+</ParamField>
+
+<ResponseField name="return" type="BaseType_t">
+  Always `pdPASS`.
+</ResponseField>
+
+<Info>
+  Use `xTaskNotifyGive()` when signalling from task context. Use `vTaskNotifyGiveFromISR()` when signalling from an ISR.
+</Info>
+
+---
+
+### ulTaskNotifyTake / ulTaskNotifyTakeIndexed
+
+Wait for a task notification value to become non-zero, behaving like taking a binary or counting semaphore.
+
+```c
+// Index 0
+#define ulTaskNotifyTake( xClearCountOnExit, xTicksToWait )
+
+// Explicit index
+#define ulTaskNotifyTakeIndexed( uxIndexToWaitOn, xClearCountOnExit, \
+                                 xTicksToWait )
+```
+
+Both expand to `ulTaskGenericNotifyTake()`:
+
+```c
+uint32_t ulTaskGenericNotifyTake(
+    UBaseType_t uxIndexToWaitOn,
+    BaseType_t xClearCountOnExit,
+    TickType_t xTicksToWait
+);
+```
+
+<ParamField path="uxIndexToWaitOn" type="UBaseType_t" required>
+  Notification array index. `ulTaskNotifyTake()` always uses index 0.
+</ParamField>
+
+<ParamField path="xClearCountOnExit" type="BaseType_t" required>
+  If `pdTRUE`, the notification value is cleared to zero on exit (binary semaphore behaviour). If `pdFALSE`, the notification value is decremented on exit (counting semaphore behaviour).
+</ParamField>
+
+<ParamField path="xTicksToWait" type="TickType_t" required>
+  Maximum ticks to block if the notification value is already zero.
+</ParamField>
+
+<ResponseField name="return" type="uint32_t">
+  The notification value before it was cleared or decremented.
+</ResponseField>
+
+---
+
+### vTaskNotifyGiveFromISR / vTaskNotifyGiveIndexedFromISR
+
+Lightweight ISR notification give, equivalent to giving a binary or counting semaphore. Increments the target task's notification value.
+
+```c
+// Index 0
+#define vTaskNotifyGiveFromISR( xTaskToNotify, pxHigherPriorityTaskWoken )
+
+// Explicit index
+#define vTaskNotifyGiveIndexedFromISR( xTaskToNotify, uxIndexToNotify, \
+                                       pxHigherPriorityTaskWoken )
+```
+
+Both expand to `vTaskGenericNotifyGiveFromISR()`:
+
+```c
+void vTaskGenericNotifyGiveFromISR(
+    TaskHandle_t xTaskToNotify,
+    UBaseType_t uxIndexToNotify,
+    BaseType_t * pxHigherPriorityTaskWoken
+);
+```
+
+<ParamField path="xTaskToNotify" type="TaskHandle_t" required>
+  Handle of the task to notify.
+</ParamField>
+
+<ParamField path="uxIndexToNotify" type="UBaseType_t" required>
+  Notification array index.
+</ParamField>
+
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t *" required>
+  Set to `pdTRUE` if the notification unblocked a higher-priority task. Request a context switch before exiting the ISR if so.
+</ParamField>
+
+```c example
+// Lightweight ISR-to-task signalling using ulTaskNotifyTake / vTaskNotifyGiveFromISR.
+static TaskHandle_t xReceiverHandle = NULL;
+
+void vDMACompleteISR( void )
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    // Give the notification — increments the receiving task's notification value.
+    vTaskNotifyGiveFromISR( xReceiverHandle, &xHigherPriorityTaskWoken );
+
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+
+void vReceiverTask( void *pvParameters )
+{
+    for( ;; )
+    {
+        // Block until the ISR gives the notification.
+        ulTaskNotifyTake( pdTRUE, portMAX_DELAY );
+
+        // DMA transfer is complete — process the data.
+        vProcessDMABuffer();
+    }
+}
+```

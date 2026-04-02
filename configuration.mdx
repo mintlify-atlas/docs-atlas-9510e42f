@@ -1,0 +1,385 @@
+---
+title: "Configuration"
+description: "Configure FreeRTOS Kernel behavior using FreeRTOSConfig.h"
+---
+
+FreeRTOS Kernel behavior is controlled entirely by `FreeRTOSConfig.h`, a header file that your application must provide. The kernel does not ship a default `FreeRTOSConfig.h` — you must create one and make it available to the build system via the `freertos_config` CMake target (see [Quick start](/quickstart)).
+
+<Warning>
+`FreeRTOSConfig.h` must be supplied by your application, not by the kernel. If the file is missing or the include path is not configured, the build will fail. Start from the template at `examples/template_configuration/FreeRTOSConfig.h` in the kernel repository.
+</Warning>
+
+A full template with comments for every option is available at:
+
+```
+FreeRTOS-Kernel/examples/template_configuration/FreeRTOSConfig.h
+```
+
+The sections below cover the most important configuration groups.
+
+---
+
+<AccordionGroup>
+
+<Accordion title="Hardware">
+
+These defines describe your target hardware and drive timing calculations inside the kernel.
+
+```c FreeRTOSConfig.h
+/* Frequency of the clock that drives the peripheral generating the tick
+ * interrupt. In most cases this equals the main CPU clock. The default
+ * value of 20000000 matches the QEMU demo — set this to your MCU's
+ * actual clock frequency. */
+#define configCPU_CLOCK_HZ    ( ( unsigned long ) 20000000 )
+
+/* Optional: only needed for ARM Cortex-M ports where the SysTick timer
+ * runs at a different frequency from the CPU core. Leave undefined when
+ * both clocks run at the same rate.
+ *
+ * #define configSYSTICK_CLOCK_HZ    [Platform specific]
+ */
+```
+
+| Define | Default in template | Description |
+|---|---|---|
+| `configCPU_CLOCK_HZ` | `20000000` | Peripheral clock driving the tick interrupt, in Hz |
+| `configSYSTICK_CLOCK_HZ` | *(undefined)* | ARM Cortex-M only: SysTick clock if different from CPU clock |
+
+</Accordion>
+
+<Accordion title="Scheduling">
+
+These defines control how the scheduler selects and switches tasks.
+
+```c FreeRTOSConfig.h
+/* Tick interrupt frequency in Hz. A higher value gives finer timing
+ * resolution but increases interrupt overhead. */
+#define configTICK_RATE_HZ                         100
+
+/* 1 = preemptive scheduling (recommended).
+ * 0 = cooperative scheduling (tasks must yield explicitly). */
+#define configUSE_PREEMPTION                       1
+
+/* 1 = round-robin between equal-priority ready tasks on every tick.
+ * 0 = a task at a given priority runs until it blocks or yields. */
+#define configUSE_TIME_SLICING                     0
+
+/* Use a hardware CLZ instruction to find the highest-priority ready
+ * task. Faster than the generic C implementation but not available on
+ * all ports. */
+#define configUSE_PORT_OPTIMISED_TASK_SELECTION    0
+
+/* 1 = enter a low-power tickless sleep when no tasks are ready.
+ * Not supported by all ports. */
+#define configUSE_TICKLESS_IDLE                    0
+
+/* Number of task priorities available. Tasks can be assigned priorities
+ * from 0 (lowest) to configMAX_PRIORITIES - 1 (highest). */
+#define configMAX_PRIORITIES                       5
+
+/* Stack size (in words, not bytes) of the Idle task. */
+#define configMINIMAL_STACK_SIZE                   128
+
+/* Maximum length of a task name string, including the null terminator. */
+#define configMAX_TASK_NAME_LEN                    16
+
+/* Bit width of the TickType_t counter.
+ * TICK_TYPE_WIDTH_16_BITS, TICK_TYPE_WIDTH_32_BITS, or
+ * TICK_TYPE_WIDTH_64_BITS. */
+#define configTICK_TYPE_WIDTH_IN_BITS              TICK_TYPE_WIDTH_64_BITS
+
+/* 1 = Idle task yields if a priority-0 application task is ready.
+ * 0 = Idle task uses its full time slice. */
+#define configIDLE_SHOULD_YIELD                    1
+```
+
+| Define | Template value | Description |
+|---|---|---|
+| `configTICK_RATE_HZ` | `100` | Tick interrupt frequency in Hz |
+| `configUSE_PREEMPTION` | `1` | Enable preemptive scheduling |
+| `configUSE_TIME_SLICING` | `0` | Round-robin for equal-priority tasks |
+| `configUSE_PORT_OPTIMISED_TASK_SELECTION` | `0` | Use hardware CLZ for task selection |
+| `configUSE_TICKLESS_IDLE` | `0` | Low-power tickless idle mode |
+| `configMAX_PRIORITIES` | `5` | Number of available priority levels |
+| `configMINIMAL_STACK_SIZE` | `128` | Idle task stack size in words |
+| `configMAX_TASK_NAME_LEN` | `16` | Maximum task name length |
+| `configTICK_TYPE_WIDTH_IN_BITS` | `TICK_TYPE_WIDTH_64_BITS` | Bit width of the tick counter |
+| `configIDLE_SHOULD_YIELD` | `1` | Idle yields to priority-0 app tasks |
+
+</Accordion>
+
+<Accordion title="Memory">
+
+These defines control heap size, allocation strategy, and related safety features.
+
+```c FreeRTOSConfig.h
+/* 1 = include API functions that create kernel objects from static
+ * memory. You must provide vApplicationGetIdleTaskMemory() and
+ * (if timers are used) vApplicationGetTimerTaskMemory(). */
+#define configSUPPORT_STATIC_ALLOCATION              1
+
+/* 1 = include API functions that create kernel objects from the
+ * FreeRTOS heap (pvPortMalloc / vPortFree). */
+#define configSUPPORT_DYNAMIC_ALLOCATION             1
+
+/* Total size of the FreeRTOS heap in bytes. Only used by heap_1.c,
+ * heap_2.c, and heap_4.c. Tune this to your application's needs;
+ * the array appears in the .bss section. */
+#define configTOTAL_HEAP_SIZE                        4096
+
+/* 1 = application allocates the heap array (ucHeap[]).
+ * 0 = linker allocates the heap array. */
+#define configAPPLICATION_ALLOCATED_HEAP             0
+
+/* 1 = task stacks are allocated from a separate heap rather than the
+ * FreeRTOS heap. Requires pvPortMallocStack() and vPortFreeStack(). */
+#define configSTACK_ALLOCATION_FROM_SEPARATE_HEAP    0
+
+/* 1 = enable bounds-checking on internal heap block pointers in
+ * heap_4.c and heap_5.c to help detect pointer corruption. */
+#define configENABLE_HEAP_PROTECTOR                  0
+
+/* 1 = zero memory returned by pvPortMalloc() when it is freed
+ * via vPortFree(). */
+#define configHEAP_CLEAR_MEMORY_ON_FREE              1
+```
+
+| Define | Template value | Description |
+|---|---|---|
+| `configSUPPORT_STATIC_ALLOCATION` | `1` | Enable static object creation |
+| `configSUPPORT_DYNAMIC_ALLOCATION` | `1` | Enable dynamic object creation |
+| `configTOTAL_HEAP_SIZE` | `4096` | Heap size in bytes |
+| `configAPPLICATION_ALLOCATED_HEAP` | `0` | Application owns the heap array |
+| `configSTACK_ALLOCATION_FROM_SEPARATE_HEAP` | `0` | Separate heap for task stacks |
+| `configENABLE_HEAP_PROTECTOR` | `0` | Heap block pointer integrity checks |
+| `configHEAP_CLEAR_MEMORY_ON_FREE` | `1` | Zero memory on `vPortFree()` |
+
+</Accordion>
+
+<Accordion title="Task hooks">
+
+Hook functions allow the application to inject code at key kernel events without modifying kernel source. Set a constant to `1` and implement the corresponding function in your application.
+
+```c FreeRTOSConfig.h
+/* vApplicationIdleHook() is called by the Idle task on every iteration
+ * of its loop. Must never block or call API functions that may block. */
+#define configUSE_IDLE_HOOK                   0
+
+/* vApplicationTickHook() is called from the tick ISR.
+ * Must be very short and must not call non-ISR-safe API functions. */
+#define configUSE_TICK_HOOK                   0
+
+/* vApplicationMallocFailedHook() is called when pvPortMalloc() fails.
+ * Requires configSUPPORT_DYNAMIC_ALLOCATION = 1. */
+#define configUSE_MALLOC_FAILED_HOOK          0
+
+/* vApplicationDaemonTaskStartupHook() is called once by the timer/
+ * daemon task before the task enters its main loop. */
+#define configUSE_DAEMON_TASK_STARTUP_HOOK    0
+
+/* Stack overflow detection method:
+ *   0 = disabled
+ *   1 = check the stack pointer at context switch time (fast, limited)
+ *   2 = check a known pattern written to the bottom of each task's
+ *       stack (slower, catches more overflows)
+ * Requires vApplicationStackOverflowHook() when non-zero. */
+#define configCHECK_FOR_STACK_OVERFLOW        2
+```
+
+| Define | Template value | Description |
+|---|---|---|
+| `configUSE_IDLE_HOOK` | `0` | Call `vApplicationIdleHook()` in Idle task |
+| `configUSE_TICK_HOOK` | `0` | Call `vApplicationTickHook()` from tick ISR |
+| `configUSE_MALLOC_FAILED_HOOK` | `0` | Call `vApplicationMallocFailedHook()` on allocation failure |
+| `configUSE_DAEMON_TASK_STARTUP_HOOK` | `0` | Call `vApplicationDaemonTaskStartupHook()` at timer task startup |
+| `configCHECK_FOR_STACK_OVERFLOW` | `2` | Stack overflow detection method (0, 1, or 2) |
+
+</Accordion>
+
+<Accordion title="Features">
+
+These defines enable or disable individual kernel objects and API sets. Disabling unused features reduces code size.
+
+```c FreeRTOSConfig.h
+/* Software timers — requires timers.c in the build. */
+#define configUSE_TIMERS                           1
+#define configTIMER_TASK_PRIORITY                  ( configMAX_PRIORITIES - 1 )
+#define configTIMER_TASK_STACK_DEPTH               configMINIMAL_STACK_SIZE
+#define configTIMER_QUEUE_LENGTH                   10
+
+/* Event groups — requires event_groups.c in the build. */
+#define configUSE_EVENT_GROUPS                     1
+
+/* Stream buffers and message buffers — requires stream_buffer.c. */
+#define configUSE_STREAM_BUFFERS                   1
+
+/* Mutexes with priority inheritance. */
+#define configUSE_MUTEXES                          1
+
+/* Recursive mutexes (a task can lock the same mutex multiple times). */
+#define configUSE_RECURSIVE_MUTEXES                1
+
+/* Counting semaphores. */
+#define configUSE_COUNTING_SEMAPHORES              1
+
+/* Task notifications — lightweight alternative to binary semaphores.
+ * configTASK_NOTIFICATION_ARRAY_ENTRIES controls how many notification
+ * values each task holds (defaults to 1). */
+#define configUSE_TASK_NOTIFICATIONS               1
+#define configTASK_NOTIFICATION_ARRAY_ENTRIES      1
+
+/* Queue sets — allows a task to block on multiple queues/semaphores. */
+#define configUSE_QUEUE_SETS                       0
+
+/* Per-task application tag value (for tracing or user data). */
+#define configUSE_APPLICATION_TASK_TAG             0
+```
+
+| Define | Template value | Description |
+|---|---|---|
+| `configUSE_TIMERS` | `1` | Include software timer support |
+| `configTIMER_TASK_PRIORITY` | `configMAX_PRIORITIES - 1` | Priority of the timer service task |
+| `configTIMER_TASK_STACK_DEPTH` | `configMINIMAL_STACK_SIZE` | Stack size of the timer service task |
+| `configTIMER_QUEUE_LENGTH` | `10` | Timer command queue length |
+| `configUSE_EVENT_GROUPS` | `1` | Include event group support |
+| `configUSE_STREAM_BUFFERS` | `1` | Include stream/message buffer support |
+| `configUSE_MUTEXES` | `1` | Include mutex support |
+| `configUSE_RECURSIVE_MUTEXES` | `1` | Include recursive mutex support |
+| `configUSE_COUNTING_SEMAPHORES` | `1` | Include counting semaphore support |
+| `configUSE_TASK_NOTIFICATIONS` | `1` | Include task notification support |
+| `configTASK_NOTIFICATION_ARRAY_ENTRIES` | `1` | Notification slots per task |
+| `configUSE_QUEUE_SETS` | `0` | Include queue set support |
+
+</Accordion>
+
+<Accordion title="Debug">
+
+These defines add instrumentation, assertions, and tracing support.
+
+```c FreeRTOSConfig.h
+/* configASSERT() has the same semantics as the standard C assert().
+ * The implementation below disables interrupts and halts in a loop so
+ * a debugger can identify the failing assertion. */
+#define configASSERT( x )         \
+    if( ( x ) == 0 )              \
+    {                             \
+        taskDISABLE_INTERRUPTS(); \
+        for( ; ; )                \
+        ;                         \
+    }
+
+/* 1 = collect per-task CPU usage statistics. The application must
+ * provide a high-resolution clock source (typically a hardware timer
+ * running faster than the tick). */
+#define configGENERATE_RUN_TIME_STATS           0
+
+/* 1 = add extra fields to the task control block used by trace tools
+ * (e.g. Tracealyzer, SystemView). */
+#define configUSE_TRACE_FACILITY                0
+
+/* 1 = include vTaskList() and vTaskGetRunTimeStats() which format
+ * task information into a human-readable string. Introduces a
+ * dependency on sprintf(). */
+#define configUSE_STATS_FORMATTING_FUNCTIONS    0
+
+/* Maximum number of queues and semaphores visible in a kernel-aware
+ * debugger queue registry. 0 = registry disabled. */
+#define configQUEUE_REGISTRY_SIZE               0
+```
+
+| Define | Template value | Description |
+|---|---|---|
+| `configASSERT` | *(halt macro)* | Assertion handler |
+| `configGENERATE_RUN_TIME_STATS` | `0` | Collect per-task CPU usage |
+| `configUSE_TRACE_FACILITY` | `0` | Add trace fields to task control block |
+| `configUSE_STATS_FORMATTING_FUNCTIONS` | `0` | Include `vTaskList()` and `vTaskGetRunTimeStats()` |
+| `configQUEUE_REGISTRY_SIZE` | `0` | Queue registry size for kernel-aware debuggers |
+
+</Accordion>
+
+<Accordion title="SMP (Symmetric Multiprocessing)">
+
+These defines are only relevant when targeting a multicore device. Single-core ports ignore them.
+
+```c FreeRTOSConfig.h
+/* Number of processor cores. Defaults to 1 if left undefined.
+ * Uncomment and set for multicore targets.
+ *
+ * #define configNUMBER_OF_CORES    [number of available cores]
+ */
+
+/* When configNUMBER_OF_CORES > 1:
+ * 0 = enforce strict priority — a lower-priority task never runs if a
+ *     higher-priority task is ready, even on a separate core.
+ * 1 = allow tasks of different priorities to run simultaneously on
+ *     separate cores. */
+#define configRUN_MULTIPLE_PRIORITIES             0
+
+/* 1 = enable the vTaskCoreAffinitySet() / vTaskCoreAffinityGet() APIs
+ * to pin tasks to specific cores. */
+#define configUSE_CORE_AFFINITY                   0
+
+/* Default core affinity mask for tasks created without an explicit
+ * affinity. tskNO_AFFINITY = task may run on any core. */
+#define configTASK_DEFAULT_CORE_AFFINITY          tskNO_AFFINITY
+
+/* 1 = individual tasks can switch between preemptive and cooperative
+ * mode using vTaskPreemptionDisable() / vTaskPreemptionEnable(). */
+#define configUSE_TASK_PREEMPTION_DISABLE         0
+
+/* 1 = enable the passive idle hook, called by the passive idle task
+ * on cores where no other task is running. */
+#define configUSE_PASSIVE_IDLE_HOOK               0
+
+/* Core affinity for the timer service task. tskNO_AFFINITY = any core. */
+#define configTIMER_SERVICE_TASK_CORE_AFFINITY    tskNO_AFFINITY
+```
+
+| Define | Template value | Description |
+|---|---|---|
+| `configNUMBER_OF_CORES` | *(undefined = 1)* | Number of processor cores |
+| `configRUN_MULTIPLE_PRIORITIES` | `0` | Allow tasks of different priorities to run simultaneously |
+| `configUSE_CORE_AFFINITY` | `0` | Enable core affinity API |
+| `configTASK_DEFAULT_CORE_AFFINITY` | `tskNO_AFFINITY` | Default affinity mask for new tasks |
+| `configUSE_TASK_PREEMPTION_DISABLE` | `0` | Per-task preemption control |
+| `configUSE_PASSIVE_IDLE_HOOK` | `0` | Passive idle hook for idle cores |
+| `configTIMER_SERVICE_TASK_CORE_AFFINITY` | `tskNO_AFFINITY` | Core affinity of timer service task |
+
+</Accordion>
+
+</AccordionGroup>
+
+---
+
+## Optional API inclusion
+
+The `INCLUDE_*` macros control which optional API functions are compiled in. Set to `1` to include, `0` to exclude. Most linkers dead-strip unused functions regardless, but setting to `0` is explicit and can reduce build time.
+
+```c FreeRTOSConfig.h
+#define INCLUDE_vTaskPrioritySet               1
+#define INCLUDE_uxTaskPriorityGet              1
+#define INCLUDE_vTaskDelete                    1
+#define INCLUDE_vTaskSuspend                   1
+#define INCLUDE_xTaskDelayUntil                1
+#define INCLUDE_vTaskDelay                     1
+#define INCLUDE_xTaskGetSchedulerState         1
+#define INCLUDE_xTaskGetCurrentTaskHandle      1
+#define INCLUDE_uxTaskGetStackHighWaterMark    0
+#define INCLUDE_xTaskGetIdleTaskHandle         0
+#define INCLUDE_eTaskGetState                  0
+#define INCLUDE_xTimerPendFunctionCall         0
+#define INCLUDE_xTaskAbortDelay                0
+#define INCLUDE_xTaskGetHandle                 0
+#define INCLUDE_xTaskResumeFromISR             1
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Integrate the kernel into your CMake project and run your first task.
+  </Card>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Learn about kernel architecture, objects, and supported architectures.
+  </Card>
+</CardGroup>

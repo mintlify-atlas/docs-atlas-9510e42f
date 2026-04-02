@@ -1,0 +1,111 @@
+---
+title: "Introduction"
+description: "What FreeRTOS Kernel is, why you'd use it, and how it fits into embedded development"
+---
+
+FreeRTOS Kernel is a real-time operating system (RTOS) kernel for microcontrollers and small microprocessors. It is distributed under the MIT license and forms the foundation of the broader FreeRTOS ecosystem. The kernel source is hosted at [FreeRTOS/FreeRTOS-Kernel](https://github.com/FreeRTOS/FreeRTOS-Kernel) and is referenced as a submodule in the [FreeRTOS/FreeRTOS](https://github.com/FreeRTOS/FreeRTOS) repository, which contains pre-configured demo application projects.
+
+**Current release:** FreeRTOS-Kernel V11.1.0, part of the [FreeRTOS 202406.00 LTS](https://github.com/FreeRTOS/FreeRTOS-LTS/tree/202406-LTS) release.
+
+## Why use an RTOS?
+
+Bare-metal development requires you to manually schedule work, poll peripherals, and hand-roll concurrency primitives. As applications grow, this approach becomes difficult to reason about and maintain. An RTOS gives you:
+
+- **Determinism** — tasks and interrupts execute with bounded, predictable latency.
+- **Task isolation** — each task has its own stack and execution context, reducing coupling between subsystems.
+- **Built-in IPC** — queues, semaphores, mutexes, event groups, and stream buffers are provided by the kernel, so you do not need to implement them yourself.
+- **Priority-based scheduling** — the kernel always runs the highest-priority ready task, making it straightforward to express timing requirements.
+
+## Key kernel objects
+
+<CardGroup cols={2}>
+  <Card title="Tasks" icon="layer-group">
+    Independent units of execution, each with its own stack and priority (0 to `configMAX_PRIORITIES - 1`). Created with `xTaskCreate()` and managed by the preemptive or cooperative scheduler.
+  </Card>
+  <Card title="Queues" icon="arrows-left-right">
+    Thread-safe FIFO buffers for passing data between tasks and from ISRs to tasks. The foundation for all other IPC primitives.
+  </Card>
+  <Card title="Semaphores & mutexes" icon="lock">
+    Binary and counting semaphores for signaling and resource counting. Mutexes add priority inheritance to prevent priority inversion.
+  </Card>
+  <Card title="Event groups" icon="flag">
+    Sets of event bits (flags) that tasks can set, clear, and wait on with AND or OR logic. Useful for synchronizing multiple tasks to a set of conditions.
+  </Card>
+  <Card title="Software timers" icon="clock">
+    One-shot and auto-reload timers whose callbacks execute in the context of a dedicated timer service task. Configured with `configUSE_TIMERS`.
+  </Card>
+  <Card title="Stream & message buffers" icon="wave-square">
+    Lightweight byte-stream and framed-message primitives optimized for single-reader/single-writer scenarios such as ISR-to-task data flow.
+  </Card>
+</CardGroup>
+
+## Architecture
+
+The kernel itself is contained in three C files at the root of the repository:
+
+| File | Purpose |
+|---|---|
+| `tasks.c` | Scheduler, task creation, deletion, and control |
+| `queue.c` | Queues, semaphores, mutexes, and queue sets |
+| `list.c` | Doubly-linked list used internally by the scheduler |
+
+Additional source files provide optional functionality:
+
+| File | Purpose |
+|---|---|
+| `timers.c` | Software timer service task |
+| `event_groups.c` | Event group implementation |
+| `stream_buffer.c` | Stream buffers and message buffers |
+| `croutine.c` | Co-routines (for very memory-constrained targets) |
+
+### Directory structure
+
+```
+FreeRTOS-Kernel/
+├── tasks.c             # Core scheduler
+├── queue.c             # Queues and semaphores
+├── list.c              # Internal linked list
+├── timers.c            # Software timers
+├── event_groups.c      # Event groups
+├── stream_buffer.c     # Stream / message buffers
+├── croutine.c          # Optional co-routines
+├── include/            # Public kernel headers
+├── portable/           # Port-specific files (per compiler/MCU)
+│   ├── GCC/            # GCC ports
+│   ├── IAR/            # IAR ports
+│   ├── RVDS/           # Arm RVDS ports
+│   ├── MemMang/        # Heap implementations (heap_1.c … heap_5.c)
+│   └── Common/         # Shared portable utilities
+└── examples/
+    └── template_configuration/
+        └── FreeRTOSConfig.h  # Template configuration file
+```
+
+## Supported architectures
+
+The `portable/` directory contains ports for a wide range of architectures and compilers. GCC ports found in `portable/GCC/` include:
+
+- **ARM Cortex-M** — CM0, CM3, CM4F, CM7, CM23, CM33, CM35P, CM52, CM55, CM85 (including MPU, TrustZone, and SRE variants)
+- **ARM Cortex-R** — CR5, CR82, CRx with MPU and no-GIC variants
+- **ARM Cortex-A** — CA9, AARCH64, CA53 64-bit
+- **RISC-V** — RISC-V, RISC-V generic with extension, Pulpino Vega RV32M1RM
+- **AVR** — ATMega323, ATmega, AVRDx, AVR Mega0, AVR32 UC3
+- **Renesas** — RL78, RX100, RX200, RX600, RX700v3
+- **Others** — MicroBlaze, NiosII, PPC405/440 (Xilinx), TriCore, IA32, MSP430, ColdFire, Xtensa ESP32, RP2040, POSIX (Linux host)
+
+IAR, RVDS, CCS, MikroC, MPLAB, Renesas, Rowley, Softune, Tasking, and other compiler toolchains also have dedicated ports.
+
+<Note>
+Use the port that matches your exact target MCU and compiler. Each port is a subdirectory under `portable/<Compiler>/<Architecture>/` and provides `port.c` and `portmacro.h`.
+</Note>
+
+## Ready to integrate?
+
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Add the kernel to your CMake project and run your first task in minutes.
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration">
+    Tune kernel behavior for your hardware with `FreeRTOSConfig.h`.
+  </Card>
+</CardGroup>

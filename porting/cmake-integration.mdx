@@ -1,0 +1,255 @@
+---
+title: "CMake Integration"
+description: "Integrating FreeRTOS Kernel into your CMake build using FetchContent or submodule"
+---
+
+FreeRTOS Kernel ships a `CMakeLists.txt` that produces a static library target called `freertos_kernel`. You link your application against this target and the kernel handles adding port sources and include paths automatically.
+
+Two integration methods are supported: **FetchContent** (fetches the source at configure time) and a **git submodule** (source lives alongside your repository).
+
+<Tip>
+Always pin to a specific git tag or commit hash rather than a branch name like `main`. Tags such as `V11.1.0` and the LTS release `202406.00` give you reproducible builds. Floating branch references mean your build can silently change when the upstream repository receives commits.
+</Tip>
+
+<CodeGroup>
+
+```cmake FetchContent (CMakeLists.txt)
+cmake_minimum_required(VERSION 3.15)
+project(my_app C)
+
+include(FetchContent)
+
+FetchContent_Declare(
+  freertos_kernel
+  GIT_REPOSITORY https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+  GIT_TAG        V11.1.0  # pin to a tag or full commit hash
+)
+
+# 1. Create the freertos_config INTERFACE library so the kernel
+#    can find FreeRTOSConfig.h.  The header lives in include/.
+add_library(freertos_config INTERFACE)
+target_include_directories(freertos_config SYSTEM INTERFACE
+    include   # directory that contains FreeRTOSConfig.h
+)
+
+# 2. Choose a heap implementation (1-5) or a path to a custom .c file.
+set(FREERTOS_HEAP "4" CACHE STRING "" FORCE)
+
+# 3. Choose the port that matches your toolchain + target CPU.
+set(FREERTOS_PORT "GCC_ARM_CM4F" CACHE STRING "" FORCE)
+
+# 4. Make the kernel available and pull sources.
+FetchContent_MakeAvailable(freertos_kernel)
+
+add_executable(my_app main.c)
+target_link_libraries(my_app PRIVATE freertos_kernel freertos_config)
+```
+
+```cmake Git submodule (CMakeLists.txt)
+cmake_minimum_required(VERSION 3.15)
+project(my_app C)
+
+# Assumes: git submodule add \
+#   https://github.com/FreeRTOS/FreeRTOS-Kernel.git \
+#   third_party/freertos-kernel
+
+# 1. Create the freertos_config INTERFACE library.
+add_library(freertos_config INTERFACE)
+target_include_directories(freertos_config SYSTEM INTERFACE
+    include   # directory that contains FreeRTOSConfig.h
+)
+
+# 2. Choose a heap implementation.
+set(FREERTOS_HEAP "4" CACHE STRING "" FORCE)
+
+# 3. Choose the port.
+set(FREERTOS_PORT "GCC_ARM_CM4F" CACHE STRING "" FORCE)
+
+# 4. Pull in the kernel from the submodule path.
+add_subdirectory(third_party/freertos-kernel)
+
+add_executable(my_app main.c)
+target_link_libraries(my_app PRIVATE freertos_kernel freertos_config)
+```
+
+</CodeGroup>
+
+## Step-by-step integration
+
+<Steps>
+  <Step title="Add FreeRTOS Kernel to your project">
+    Choose FetchContent or a git submodule.
+
+    **FetchContent** — add `FetchContent_Declare` to your `CMakeLists.txt` with the repository URL and a pinned tag:
+
+    ```cmake
+    include(FetchContent)
+    FetchContent_Declare(
+      freertos_kernel
+      GIT_REPOSITORY https://github.com/FreeRTOS/FreeRTOS-Kernel.git
+      GIT_TAG        V11.1.0
+    )
+    ```
+
+    **Git submodule** — run once from your repository root:
+
+    ```bash
+    git submodule add https://github.com/FreeRTOS/FreeRTOS-Kernel.git third_party/freertos-kernel
+    git submodule update --init
+    ```
+
+    Then call `add_subdirectory(third_party/freertos-kernel)` in your `CMakeLists.txt`.
+  </Step>
+
+  <Step title="Create the freertos_config library">
+    The kernel requires a CMake target named **exactly** `freertos_config`. This target must expose the directory containing your `FreeRTOSConfig.h` on its include path.
+
+    ```cmake
+    add_library(freertos_config INTERFACE)
+    target_include_directories(freertos_config SYSTEM INTERFACE
+        include   # path relative to CMakeLists.txt that holds FreeRTOSConfig.h
+    )
+    ```
+
+    If the kernel is configured but `freertos_config` is not defined, CMake will terminate with a fatal error explaining the required setup.
+  </Step>
+
+  <Step title="Set FREERTOS_HEAP">
+    When dynamic allocation is used, you must tell the kernel which heap implementation to compile. Pass a digit `1`–`5` or a path to a custom `.c` file:
+
+    ```cmake
+    # Use the built-in heap_4 (recommended for most applications)
+    set(FREERTOS_HEAP "4" CACHE STRING "" FORCE)
+
+    # Or supply your own allocator
+    set(FREERTOS_HEAP "${CMAKE_CURRENT_LIST_DIR}/src/my_heap.c" CACHE STRING "" FORCE)
+    ```
+
+    If your application uses only static allocation (`configSUPPORT_DYNAMIC_ALLOCATION 0`), `FREERTOS_HEAP` can be left unset.
+  </Step>
+
+  <Step title="Set FREERTOS_PORT">
+    Select the port string for your compiler and target CPU:
+
+    ```cmake
+    set(FREERTOS_PORT "GCC_ARM_CM4F" CACHE STRING "" FORCE)
+    ```
+
+    For projects that support both native (host) and cross-compiled builds, switch the port based on `CMAKE_CROSSCOMPILING`:
+
+    ```cmake
+    # From the FreeRTOS Kernel README.md
+    set(FREERTOS_HEAP "4" CACHE STRING "" FORCE)
+    # Select the native compile PORT
+    set(FREERTOS_PORT "GCC_POSIX" CACHE STRING "" FORCE)
+    # Select the cross-compile PORT
+    if(CMAKE_CROSSCOMPILING)
+      set(FREERTOS_PORT "GCC_ARM_CA9" CACHE STRING "" FORCE)
+    endif()
+    ```
+  </Step>
+
+  <Step title="Make the kernel available">
+    For FetchContent, call `FetchContent_MakeAvailable` after all variables are set:
+
+    ```cmake
+    FetchContent_MakeAvailable(freertos_kernel)
+    ```
+
+    For a submodule, `add_subdirectory` serves the same purpose. Both calls define the `freertos_kernel` target.
+  </Step>
+
+  <Step title="Link your application">
+    Link against `freertos_kernel` (and `freertos_config` if your application code reads `FreeRTOSConfig.h` directly):
+
+    ```cmake
+    target_link_libraries(my_app PRIVATE freertos_kernel freertos_config)
+    ```
+  </Step>
+</Steps>
+
+## Cross-compilation
+
+For cross-compiled targets, add compiler definitions and flags through `freertos_config` so they propagate to both the kernel and your application:
+
+```cmake
+# Definitions and options required by the cross-compiler / BSP
+set(definitions
+    -DSTM32F407xx
+    -DUSE_HAL_DRIVER
+)
+set(options
+    -mcpu=cortex-m4
+    -mfpu=fpv4-sp-d16
+    -mfloat-abi=hard
+    -mthumb
+)
+
+target_compile_definitions(freertos_config INTERFACE ${definitions})
+target_compile_options(freertos_config INTERFACE ${options})
+```
+
+## Available CMake targets
+
+After `FetchContent_MakeAvailable` or `add_subdirectory` completes, the following targets are available:
+
+| Target | Type | Use |
+|--------|------|-----|
+| `freertos_kernel` | `STATIC` | Link your application against this |
+| `freertos_kernel_include` | `INTERFACE` | Kernel public headers (transitively linked) |
+| `freertos_kernel_port` | `OBJECT` (internal) | Port `.c` and assembly files; do not link directly |
+| `freertos_kernel_port_headers` | `INTERFACE` (internal) | Port `portmacro.h` directory |
+
+## FREERTOS_PORT values
+
+The table below lists the most commonly used port strings. If `FREERTOS_PORT` is not set, CMake prints the full list.
+
+| Value | Compiler | Target |
+|-------|----------|--------|
+| `GCC_ARM_CM0` | GCC | ARM Cortex-M0 / M0+ |
+| `GCC_ARM_CM3` | GCC | ARM Cortex-M3 |
+| `GCC_ARM_CM3_MPU` | GCC | ARM Cortex-M3 with MPU |
+| `GCC_ARM_CM4F` | GCC | ARM Cortex-M4 with FPU |
+| `GCC_ARM_CM4_MPU` | GCC | ARM Cortex-M4 with MPU |
+| `GCC_ARM_CM7` | GCC | ARM Cortex-M7 |
+| `GCC_ARM_CM23_NTZ_NONSECURE` | GCC | ARM Cortex-M23 (no TrustZone) |
+| `GCC_ARM_CM33_NONSECURE` | GCC | ARM Cortex-M33 non-secure world |
+| `GCC_ARM_CM33_NTZ_NONSECURE` | GCC | ARM Cortex-M33 (no TrustZone) |
+| `GCC_ARM_CM33_TFM` | GCC | ARM Cortex-M33 non-secure for TF-M |
+| `GCC_ARM_CM55_NONSECURE` | GCC | ARM Cortex-M55 non-secure (Helium) |
+| `GCC_ARM_CM85_NONSECURE` | GCC | ARM Cortex-M85 non-secure (Helium) |
+| `GCC_ARM_CA9` | GCC | ARM Cortex-A9 |
+| `GCC_ARM_AARCH64` | GCC | ARM v8-A (64-bit) |
+| `GCC_RISC_V` | GCC | RISC-V (RV32 / RV64) |
+| `GCC_RISC_V_GENERIC` | GCC | RISC-V with `FREERTOS_RISCV_EXTENSION` |
+| `GCC_RP2040` | GCC | Raspberry Pi RP2040 |
+| `GCC_POSIX` | GCC | POSIX (Linux / macOS simulation) |
+| `MSVC_MINGW` | MSVC / MinGW | Windows simulation |
+| `IAR_ARM_CM4F` | IAR | ARM Cortex-M4 with FPU |
+| `IAR_ARM_CM33_NONSECURE` | IAR | ARM Cortex-M33 non-secure world |
+| `IAR_ARM_CM55_NONSECURE` | IAR | ARM Cortex-M55 non-secure |
+| `RVDS_ARM_CM4F` | RVDS | ARM Cortex-M4 with FPU |
+| `TEMPLATE` | any | Stub port (used by `cmake_example`) |
+
+<Note>
+The `GCC_POSIX` port compiles FreeRTOS into a regular Linux or macOS process. Tasks run as POSIX threads; the tick is driven by a `SIGALRM` signal. This is useful for running unit tests, developing algorithms, and debugging application logic without target hardware. On Linux, CMake auto-detects the host and sets `FREERTOS_PORT=GCC_POSIX` automatically when no port is specified.
+</Note>
+
+## FREERTOS_HEAP values
+
+| Value | Description |
+|-------|-------------|
+| `1` | `heap_1.c` — bump allocator, no free |
+| `2` | `heap_2.c` — best-fit, allows free, no coalescence |
+| `3` | `heap_3.c` — wraps system `malloc`/`free` |
+| `4` | `heap_4.c` — best-fit with coalescence (recommended) |
+| `5` | `heap_5.c` — like heap_4, supports non-contiguous memory |
+| `<path>` | Path to a custom `.c` file (absolute or CMake path) |
+
+For a custom heap, the file must implement `pvPortMalloc()` and `vPortFree()`. Point `FREERTOS_HEAP` at the source file:
+
+```cmake
+set(FREERTOS_HEAP
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/my_allocator.c"
+    CACHE STRING "" FORCE)
+```

@@ -1,0 +1,336 @@
+---
+title: "Stream Buffers & Message Buffers"
+description: "Lightweight byte-stream primitives optimized for single-writer, single-reader data flow"
+---
+
+Stream buffers and message buffers are lightweight, lock-free ring-buffer primitives optimized for transferring data from a single writer to a single reader. Their implementation is particularly suited to ISR-to-task and core-to-core (SMP) communication because they avoid the overhead of a full queue structure.
+
+<Warning>
+**Single-writer, single-reader constraint.** Unlike queues and semaphores, stream buffers and message buffers are **not safe for concurrent multiple writers or multiple readers**. There must be at most one writer context and at most one reader context at any time. If your design requires multiple writers or multiple readers, serialize access with a mutex or use a queue instead.
+
+The writer and reader may be any combination of task and ISR (e.g., an ISR writes, a task reads), but you cannot have two tasks both calling `xStreamBufferSend()` on the same buffer without external serialization.
+</Warning>
+
+<Tabs>
+  <Tab title="Stream buffers">
+    A stream buffer transfers a **continuous byte stream** with no message boundaries. The reader receives however many bytes are available up to its buffer size, which may be fewer or more bytes than any single write. Use stream buffers when the consumer reassembles a protocol frame or processes data in chunks.
+
+    ### Creating a stream buffer
+
+    ```c
+    // Dynamic allocation
+    StreamBufferHandle_t xStreamBufferCreate(
+        size_t xBufferSizeBytes,     // total capacity in bytes
+        size_t xTriggerLevelBytes    // minimum bytes to unblock a waiting reader
+    );
+
+    // Static allocation
+    StreamBufferHandle_t xStreamBufferCreateStatic(
+        size_t            xBufferSizeBytes,
+        size_t            xTriggerLevelBytes,
+        uint8_t          *pucStreamBufferStorageArea,  // caller-supplied array
+        StaticStreamBuffer_t *pxStaticStreamBuffer     // caller-supplied structure
+    );
+    ```
+
+    The **trigger level** controls when a blocked reader is unblocked. A reader waiting on an empty stream buffer will not be released until at least `xTriggerLevelBytes` bytes are available (or the block time expires). Setting the trigger level to 1 means the reader unblocks as soon as any byte arrives.
+
+    ### Sending and receiving
+
+    ```c
+    // Write bytes to the stream buffer (from a task)
+    size_t xStreamBufferSend(
+        StreamBufferHandle_t xStreamBuffer,
+        const void          *pvTxData,
+        size_t               xDataLengthBytes,
+        TickType_t           xTicksToWait
+    );
+
+    // Read bytes from the stream buffer (from a task)
+    size_t xStreamBufferReceive(
+        StreamBufferHandle_t xStreamBuffer,
+        void                *pvRxData,
+        size_t               xBufferLengthBytes,
+        TickType_t           xTicksToWait
+    );
+    ```
+
+    Both functions return the number of bytes actually transferred, which may be less than requested if the buffer becomes full (send) or runs dry before the block time expires (receive).
+
+    ### ISR variants
+
+    ```c
+    size_t xStreamBufferSendFromISR(
+        StreamBufferHandle_t  xStreamBuffer,
+        const void           *pvTxData,
+        size_t                xDataLengthBytes,
+        BaseType_t           *pxHigherPriorityTaskWoken
+    );
+
+    size_t xStreamBufferReceiveFromISR(
+        StreamBufferHandle_t  xStreamBuffer,
+        void                 *pvRxData,
+        size_t                xBufferLengthBytes,
+        BaseType_t           *pxHigherPriorityTaskWoken
+    );
+    ```
+
+    ### Querying state
+
+    ```c
+    // Returns pdTRUE if the stream buffer has no free space
+    BaseType_t xStreamBufferIsFull( StreamBufferHandle_t xStreamBuffer );
+
+    // Returns pdTRUE if the stream buffer contains no data
+    BaseType_t xStreamBufferIsEmpty( StreamBufferHandle_t xStreamBuffer );
+
+    // Returns the number of bytes that can still be written
+    size_t xStreamBufferSpacesAvailable( StreamBufferHandle_t xStreamBuffer );
+    ```
+
+    ### Cleanup
+
+    ```c
+    void vStreamBufferDelete( StreamBufferHandle_t xStreamBuffer );
+    ```
+  </Tab>
+  <Tab title="Message buffers">
+    A message buffer sends **discrete variable-length messages**, each with its own implicit length header. The reader always receives exactly one complete message per call, regardless of message size. Use message buffers when each write is a semantically complete unit (a command packet, a log entry, a sensor frame).
+
+    ### Creating a message buffer
+
+    ```c
+    // Dynamic allocation
+    MessageBufferHandle_t xMessageBufferCreate( size_t xBufferSizeBytes );
+
+    // Static allocation
+    MessageBufferHandle_t xMessageBufferCreateStatic(
+        size_t              xBufferSizeBytes,
+        uint8_t            *pucMessageBufferStorageArea,
+        StaticMessageBuffer_t *pxStaticMessageBuffer
+    );
+    ```
+
+    `MessageBufferHandle_t` is a `typedef` for `StreamBufferHandle_t`. Message buffers store each message's length internally (4 bytes on a 32-bit system), so a 10-byte message consumes 14 bytes of buffer capacity.
+
+    ### Sending and receiving
+
+    ```c
+    // Send a complete message (from a task)
+    size_t xMessageBufferSend(
+        MessageBufferHandle_t xMessageBuffer,
+        const void           *pvTxData,
+        size_t                xDataLengthBytes,
+        TickType_t            xTicksToWait
+    );
+
+    // Receive a complete message (from a task)
+    size_t xMessageBufferReceive(
+        MessageBufferHandle_t xMessageBuffer,
+        void                 *pvRxData,
+        size_t                xBufferLengthBytes,
+        TickType_t            xTicksToWait
+    );
+    ```
+
+    `xMessageBufferReceive()` returns 0 if `xBufferLengthBytes` is smaller than the next message's length — the message remains in the buffer, unread.
+
+    ### ISR variants
+
+    ```c
+    size_t xMessageBufferSendFromISR(
+        MessageBufferHandle_t  xMessageBuffer,
+        const void            *pvTxData,
+        size_t                 xDataLengthBytes,
+        BaseType_t            *pxHigherPriorityTaskWoken
+    );
+
+    size_t xMessageBufferReceiveFromISR(
+        MessageBufferHandle_t  xMessageBuffer,
+        void                  *pvRxData,
+        size_t                 xBufferLengthBytes,
+        BaseType_t            *pxHigherPriorityTaskWoken
+    );
+    ```
+
+    ### Cleanup
+
+    ```c
+    // vMessageBufferDelete() is a macro that calls vStreamBufferDelete()
+    void vMessageBufferDelete( MessageBufferHandle_t xMessageBuffer );
+    ```
+  </Tab>
+</Tabs>
+
+## When to use stream buffers vs queues
+
+| Consideration | Stream buffer | Queue |
+|---|---|---|
+| Data shape | Continuous byte stream | Fixed-size discrete items |
+| Message boundaries | None (reader decides chunk size) | Each `xQueueReceive()` gets exactly one item |
+| Multiple writers | Not safe without serialization | Safe |
+| Memory overhead | Low | Moderate |
+| Trigger level | Configurable | N/A |
+| ISR→task pattern | Ideal | Supported |
+| Core→core (SMP) | Ideal | Supported |
+
+## Complete example: ISR writes ADC samples to a stream buffer
+
+```c
+#include "FreeRTOS.h"
+#include "stream_buffer.h"
+
+#define ADC_BUFFER_BYTES   512U   /* ring buffer capacity        */
+#define ADC_TRIGGER_BYTES   64U   /* unblock reader after 64 B   */
+#define ADC_CHUNK_BYTES     16U   /* bytes per ISR callback       */
+
+static StreamBufferHandle_t xAdcStreamBuffer;
+
+/* ISR: called after each ADC DMA burst */
+void ADC_DMA_IRQHandler( void )
+{
+    static uint8_t ucAdcSamples[ ADC_CHUNK_BYTES ];
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    ADC_DMA_GetSamples( ucAdcSamples, ADC_CHUNK_BYTES );
+
+    /* Write samples into the stream buffer from the ISR */
+    xStreamBufferSendFromISR( xAdcStreamBuffer,
+                              ucAdcSamples,
+                              ADC_CHUNK_BYTES,
+                              &xHigherPriorityTaskWoken );
+
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+
+/* Task: consumes the ADC byte stream in chunks */
+void vAdcConsumerTask( void *pvParameters )
+{
+    uint8_t  ucRxBuf[ 128 ];
+    size_t   xBytesReceived;
+
+    for( ;; )
+    {
+        /* Block until at least ADC_TRIGGER_BYTES are available,
+           or indefinitely if fewer bytes trickle in */
+        xBytesReceived = xStreamBufferReceive(
+            xAdcStreamBuffer,
+            ucRxBuf,
+            sizeof( ucRxBuf ),
+            portMAX_DELAY );
+
+        if( xBytesReceived > 0 )
+        {
+            DSP_Process( ucRxBuf, xBytesReceived );
+        }
+    }
+}
+
+void vStartAdcDemo( void )
+{
+    xAdcStreamBuffer = xStreamBufferCreate( ADC_BUFFER_BYTES,
+                                            ADC_TRIGGER_BYTES );
+    configASSERT( xAdcStreamBuffer != NULL );
+
+    xTaskCreate( vAdcConsumerTask, "AdcConsumer", 512, NULL, 2, NULL );
+
+    /* Configure and start the ADC DMA peripheral here */
+    ADC_DMA_Init();
+}
+```
+
+## Message buffer example: variable-length command packets
+
+```c
+#include "FreeRTOS.h"
+#include "message_buffer.h"
+
+#define CMD_BUFFER_BYTES  256U
+
+typedef struct {
+    uint8_t  ucCommandId;
+    uint8_t  ucPayloadLen;
+    uint8_t  ucPayload[ 16 ];
+} CommandPacket_t;
+
+static MessageBufferHandle_t xCmdMessageBuffer;
+
+/* Producer task: sends complete command packets */
+void vCommandProducerTask( void *pvParameters )
+{
+    CommandPacket_t xCmd;
+
+    for( ;; )
+    {
+        BuildNextCommand( &xCmd );
+
+        size_t xSent = xMessageBufferSend(
+            xCmdMessageBuffer,
+            &xCmd,
+            sizeof( xCmd ),
+            pdMS_TO_TICKS( 50 ) );
+
+        if( xSent != sizeof( xCmd ) )
+        {
+            LogError( "Command buffer full" );
+        }
+
+        vTaskDelay( pdMS_TO_TICKS( 100 ) );
+    }
+}
+
+/* Consumer task: receives one complete command per call */
+void vCommandConsumerTask( void *pvParameters )
+{
+    CommandPacket_t xReceived;
+
+    for( ;; )
+    {
+        size_t xBytes = xMessageBufferReceive(
+            xCmdMessageBuffer,
+            &xReceived,
+            sizeof( xReceived ),
+            portMAX_DELAY );
+
+        if( xBytes == sizeof( xReceived ) )
+        {
+            DispatchCommand( &xReceived );
+        }
+    }
+}
+
+void vStartMessageBufferDemo( void )
+{
+    xCmdMessageBuffer = xMessageBufferCreate( CMD_BUFFER_BYTES );
+    configASSERT( xCmdMessageBuffer != NULL );
+
+    xTaskCreate( vCommandProducerTask, "CmdProd", 256, NULL, 2, NULL );
+    xTaskCreate( vCommandConsumerTask, "CmdCons", 256, NULL, 2, NULL );
+}
+```
+
+<Tip>
+**Stream and message buffers are the recommended choice for ISR-to-task and core-to-core communication in SMP.** Their lock-free implementation (using memory barriers rather than critical sections) makes them significantly more efficient than queues in these specific patterns. On SMP systems, they are safe as long as the single-writer/single-reader constraint is maintained between individual cores.
+</Tip>
+
+## API summary
+
+| Function | Context | Description |
+|---|---|---|
+| `xStreamBufferCreate(size, trigger)` | Task | Create stream buffer (dynamic) |
+| `xStreamBufferCreateStatic(...)` | Task | Create stream buffer (static) |
+| `xStreamBufferSend(sb, data, len, ticks)` | Task | Write bytes to stream buffer |
+| `xStreamBufferReceive(sb, buf, len, ticks)` | Task | Read bytes from stream buffer |
+| `xStreamBufferSendFromISR(sb, data, len, &woken)` | ISR | Write bytes from interrupt |
+| `xStreamBufferReceiveFromISR(sb, buf, len, &woken)` | ISR | Read bytes from interrupt |
+| `xStreamBufferIsFull(sb)` | Task/ISR | Test if buffer is full |
+| `xStreamBufferIsEmpty(sb)` | Task/ISR | Test if buffer is empty |
+| `xStreamBufferSpacesAvailable(sb)` | Task/ISR | Free bytes available to write |
+| `vStreamBufferDelete(sb)` | Task | Free stream buffer resources |
+| `xMessageBufferCreate(size)` | Task | Create message buffer (dynamic) |
+| `xMessageBufferCreateStatic(...)` | Task | Create message buffer (static) |
+| `xMessageBufferSend(mb, data, len, ticks)` | Task | Write a complete message |
+| `xMessageBufferReceive(mb, buf, len, ticks)` | Task | Read one complete message |
+| `xMessageBufferSendFromISR(mb, data, len, &woken)` | ISR | Write message from interrupt |
+| `xMessageBufferReceiveFromISR(mb, buf, len, &woken)` | ISR | Read message from interrupt |
+| `vMessageBufferDelete(mb)` | Task | Free message buffer resources |

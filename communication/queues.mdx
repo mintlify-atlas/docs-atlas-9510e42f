@@ -1,0 +1,278 @@
+---
+title: "Queues"
+description: "Thread-safe FIFO queues for passing data between tasks and interrupts"
+---
+
+Queues are the primary inter-task communication mechanism in FreeRTOS. A queue is a fixed-capacity FIFO buffer that transfers data **by value** (copy), not by reference. This means the sender and receiver each hold their own copy of the data, eliminating shared-memory races without additional locking.
+
+<CardGroup cols={3}>
+  <Card title="Thread-safe" icon="shield-check">
+    Atomic send and receive operations safe from any task or ISR context
+  </Card>
+  <Card title="Blocking" icon="clock">
+    Tasks block efficiently when a queue is full or empty, consuming no CPU
+  </Card>
+  <Card title="By value" icon="copy">
+    Data is copied into and out of the queue storage, not referenced
+  </Card>
+</CardGroup>
+
+## Queue lifecycle
+
+<Steps>
+  <Step title="Create the queue">
+    Allocate the queue and its backing storage before the scheduler starts or in a task.
+
+    ```c
+    // Dynamic allocation (most common)
+    QueueHandle_t xQueueCreate(
+        UBaseType_t uxQueueLength,   // max items the queue can hold
+        UBaseType_t uxItemSize       // size of each item in bytes
+    );
+    ```
+
+    Returns a `QueueHandle_t`, or `NULL` if allocation failed.
+
+    ```c
+    // Static allocation — no heap required
+    QueueHandle_t xQueueCreateStatic(
+        UBaseType_t uxQueueLength,
+        UBaseType_t uxItemSize,
+        uint8_t    *pucQueueStorage,  // caller-supplied storage array
+        StaticQueue_t *pxQueueBuffer  // caller-supplied structure
+    );
+    ```
+
+    For static allocation, `pucQueueStorage` must be at least `uxQueueLength * uxItemSize` bytes.
+  </Step>
+
+  <Step title="Send items">
+    Post data onto the queue from a task. The item is copied from `pvItemToQueue`.
+
+    ```c
+    // Equivalent to xQueueSendToBack()
+    BaseType_t xQueueSend(
+        QueueHandle_t  xQueue,
+        const void    *pvItemToQueue,
+        TickType_t     xTicksToWait
+    );
+
+    BaseType_t xQueueSendToBack(
+        QueueHandle_t  xQueue,
+        const void    *pvItemToQueue,
+        TickType_t     xTicksToWait
+    );
+
+    BaseType_t xQueueSendToFront(
+        QueueHandle_t  xQueue,
+        const void    *pvItemToQueue,
+        TickType_t     xTicksToWait
+    );
+    ```
+
+    Returns `pdPASS` on success, `errQUEUE_FULL` if `xTicksToWait` expired.
+  </Step>
+
+  <Step title="Receive items">
+    Dequeue and copy an item into the caller's buffer.
+
+    ```c
+    BaseType_t xQueueReceive(
+        QueueHandle_t  xQueue,
+        void          *pvBuffer,     // destination buffer
+        TickType_t     xTicksToWait
+    );
+
+    // Peek without removing the item
+    BaseType_t xQueuePeek(
+        QueueHandle_t  xQueue,
+        void * const   pvBuffer,
+        TickType_t     xTicksToWait
+    );
+    ```
+
+    Returns `pdPASS` on success, `errQUEUE_EMPTY` if `xTicksToWait` expired.
+  </Step>
+
+  <Step title="Delete the queue">
+    Free the queue's memory when it is no longer needed.
+
+    ```c
+    void vQueueDelete( QueueHandle_t xQueue );
+    ```
+  </Step>
+</Steps>
+
+## Block time parameter
+
+Every send/receive call accepts a `TickType_t xTicksToWait` parameter that controls how long the calling task blocks when the operation cannot complete immediately.
+
+| Value | Behavior |
+|---|---|
+| `0` | Non-blocking. Return immediately if the queue is full/empty. |
+| `pdMS_TO_TICKS(ms)` | Block for at most the specified milliseconds. |
+| `portMAX_DELAY` | Block indefinitely (requires `INCLUDE_vTaskSuspend == 1`). |
+
+## ISR variants
+
+These variants are safe to call from interrupt service routines. They never block; instead they signal a context switch request via `pxHigherPriorityTaskWoken`.
+
+```c
+BaseType_t xQueueSendFromISR(
+    QueueHandle_t   xQueue,
+    const void     *pvItemToQueue,
+    BaseType_t     *pxHigherPriorityTaskWoken
+);
+
+BaseType_t xQueueSendToBackFromISR(
+    QueueHandle_t   xQueue,
+    const void     *pvItemToQueue,
+    BaseType_t     *pxHigherPriorityTaskWoken
+);
+
+BaseType_t xQueueSendToFrontFromISR(
+    QueueHandle_t   xQueue,
+    const void     *pvItemToQueue,
+    BaseType_t     *pxHigherPriorityTaskWoken
+);
+
+BaseType_t xQueueReceiveFromISR(
+    QueueHandle_t   xQueue,
+    void * const    pvBuffer,
+    BaseType_t     *pxHigherPriorityTaskWoken
+);
+```
+
+Always call `portYIELD_FROM_ISR( xHigherPriorityTaskWoken )` at the end of your ISR so the scheduler can switch to a higher-priority task if one was unblocked.
+
+## Querying a queue
+
+```c
+// Number of items currently in the queue
+UBaseType_t uxQueueMessagesWaiting( const QueueHandle_t xQueue );
+
+// Number of free slots remaining
+UBaseType_t uxQueueSpacesAvailable( const QueueHandle_t xQueue );
+```
+
+## Queue sets
+
+A queue set lets a single task block on multiple queues (or semaphores) at once. Requires `configUSE_QUEUE_SETS == 1`.
+
+```c
+// Create a set that can hold events from multiple queues/semaphores
+QueueSetHandle_t xQueueCreateSet( const UBaseType_t uxEventQueueLength );
+
+// Add a queue or semaphore to the set
+BaseType_t xQueueAddToSet(
+    QueueSetMemberHandle_t xQueueOrSemaphore,
+    QueueSetHandle_t       xQueueSet
+);
+
+// Block until one member has data, then return its handle
+QueueSetMemberHandle_t xQueueSelectFromSet(
+    QueueSetHandle_t xQueueSet,
+    const TickType_t xTicksToWait
+);
+```
+
+After `xQueueSelectFromSet()` returns a non-NULL handle, call `xQueueReceive()` on that specific queue to retrieve the data.
+
+## Complete example: producer and consumer tasks
+
+```c
+#include "FreeRTOS.h"
+#include "queue.h"
+
+/* Sensor reading structure passed through the queue */
+typedef struct {
+    uint16_t usSensorId;
+    int32_t  lRawValue;
+    uint32_t ulTimestampMs;
+} SensorReading_t;
+
+#define QUEUE_LENGTH  8
+
+static QueueHandle_t xSensorQueue;
+
+/* Producer: reads a sensor and enqueues the result */
+void vSensorTask( void *pvParameters )
+{
+    SensorReading_t xReading;
+
+    for( ;; )
+    {
+        /* Populate a reading (replace with real peripheral read) */
+        xReading.usSensorId    = 1U;
+        xReading.lRawValue     = ReadADC();
+        xReading.ulTimestampMs = xTaskGetTickCount() * portTICK_PERIOD_MS;
+
+        /* Send to the back of the queue; wait up to 10 ms if full */
+        if( xQueueSendToBack( xSensorQueue,
+                              &xReading,
+                              pdMS_TO_TICKS( 10 ) ) != pdPASS )
+        {
+            /* Queue full — handle overflow (log, increment counter, etc.) */
+        }
+
+        vTaskDelay( pdMS_TO_TICKS( 50 ) ); /* 20 Hz sampling rate */
+    }
+}
+
+/* Consumer: dequeues readings and processes them */
+void vProcessingTask( void *pvParameters )
+{
+    SensorReading_t xReceived;
+
+    for( ;; )
+    {
+        /* Block indefinitely until a reading is available */
+        if( xQueueReceive( xSensorQueue,
+                           &xReceived,
+                           portMAX_DELAY ) == pdPASS )
+        {
+            ProcessReading( xReceived.usSensorId,
+                            xReceived.lRawValue,
+                            xReceived.ulTimestampMs );
+        }
+    }
+}
+
+void vStartQueueDemo( void )
+{
+    /* Create queue before starting the scheduler */
+    xSensorQueue = xQueueCreate( QUEUE_LENGTH, sizeof( SensorReading_t ) );
+    configASSERT( xSensorQueue != NULL );
+
+    xTaskCreate( vSensorTask,    "Sensor",  256, NULL, 2, NULL );
+    xTaskCreate( vProcessingTask,"Process", 512, NULL, 1, NULL );
+}
+```
+
+<Warning>
+**Item size must match on both sides.** The `uxItemSize` passed to `xQueueCreate()` is fixed for the lifetime of the queue. If the producer sends `sizeof( SensorReading_t )` bytes and the consumer's receive buffer is a different type or size, memory will be corrupted silently. Always use the same struct type at both ends.
+</Warning>
+
+<Note>
+**`xQueueOverwrite()` for single-item queues.** When a queue has length 1 and you always want the receiver to see the latest value (not every value), use `xQueueOverwrite( xQueue, pvItemToQueue )`. It writes to the queue even when it is already full, replacing the previous item. The ISR-safe variant is `xQueueOverwriteFromISR()`. Do not use these on queues with length greater than 1.
+</Note>
+
+## API summary
+
+| Function | Context | Description |
+|---|---|---|
+| `xQueueCreate()` | Task | Create queue with dynamic allocation |
+| `xQueueCreateStatic()` | Task | Create queue with static allocation |
+| `xQueueSend()` / `xQueueSendToBack()` | Task | Enqueue item at the back |
+| `xQueueSendToFront()` | Task | Enqueue item at the front |
+| `xQueueReceive()` | Task | Dequeue and remove item |
+| `xQueuePeek()` | Task | Read item without removing |
+| `xQueueSendFromISR()` | ISR | Enqueue from interrupt |
+| `xQueueSendToFrontFromISR()` | ISR | Front-enqueue from interrupt |
+| `xQueueReceiveFromISR()` | ISR | Dequeue from interrupt |
+| `uxQueueMessagesWaiting()` | Task/ISR | Items currently in queue |
+| `uxQueueSpacesAvailable()` | Task/ISR | Free slots in queue |
+| `xQueueCreateSet()` | Task | Create a queue set |
+| `xQueueAddToSet()` | Task | Add queue/semaphore to set |
+| `xQueueSelectFromSet()` | Task | Block on any member of a set |
+| `vQueueDelete()` | Task | Free queue resources |

@@ -1,0 +1,230 @@
+---
+title: "Semaphores & Mutexes"
+description: "Binary semaphores, counting semaphores, and mutexes for synchronization and resource protection"
+---
+
+FreeRTOS provides three distinct semaphore types. Choosing the right one avoids subtle bugs around priority inversion and ISR safety.
+
+<CardGroup cols={3}>
+  <Card title="Binary semaphore" icon="toggle-on">
+    Signaling between a task and an ISR, or between two tasks. No ownership.
+  </Card>
+  <Card title="Counting semaphore" icon="list-ol">
+    Tracks a pool of N identical resources or counts pending events.
+  </Card>
+  <Card title="Mutex" icon="lock">
+    Mutual exclusion with priority inheritance. Must be given back by the same task that took it.
+  </Card>
+</CardGroup>
+
+## Binary semaphores
+
+A binary semaphore has two states: given (available) or taken (unavailable). It is primarily used to **signal** an event from one context to another. There is no concept of ownership — any task or ISR can give it.
+
+```c
+// Create a binary semaphore (starts in the "taken" state)
+SemaphoreHandle_t xSemaphoreCreateBinary( void );
+
+// Give (signal) the semaphore
+BaseType_t xSemaphoreGive( SemaphoreHandle_t xSemaphore );
+
+// Take (wait for) the semaphore
+BaseType_t xSemaphoreTake(
+    SemaphoreHandle_t xSemaphore,
+    TickType_t        xBlockTime
+);
+```
+
+`xSemaphoreTake()` returns `pdTRUE` if the semaphore was obtained before `xBlockTime` ticks elapsed, `pdFALSE` otherwise. Use `portMAX_DELAY` to block indefinitely.
+
+### ISR variants
+
+```c
+// Give from an ISR (no block time — ISRs must never block)
+BaseType_t xSemaphoreGiveFromISR(
+    SemaphoreHandle_t  xSemaphore,
+    BaseType_t        *pxHigherPriorityTaskWoken
+);
+
+// Take from an ISR (uncommon; useful for counting resource pools)
+BaseType_t xSemaphoreTakeFromISR(
+    SemaphoreHandle_t  xSemaphore,
+    BaseType_t        *pxHigherPriorityTaskWoken
+);
+```
+
+## Counting semaphores
+
+A counting semaphore holds an integer count. `xSemaphoreGive()` increments it; `xSemaphoreTake()` decrements it and blocks when the count reaches zero.
+
+```c
+SemaphoreHandle_t xSemaphoreCreateCounting(
+    UBaseType_t uxMaxCount,      // upper bound on the count
+    UBaseType_t uxInitialCount   // count at creation time
+);
+```
+
+**Two common uses:**
+
+| Use case | `uxInitialCount` | Give | Take |
+|---|---|---|---|
+| Event counting | `0` | ISR increments on each event | Task processes one event per take |
+| Resource pool | `uxMaxCount` | Return a resource to the pool | Acquire a resource from the pool |
+
+## Mutexes
+
+A mutex adds **priority inheritance** and **ownership semantics** on top of a binary semaphore. When a low-priority task holds a mutex that a high-priority task is waiting for, FreeRTOS temporarily raises the holder's priority to prevent priority inversion. The task that takes a mutex **must** be the one to give it back.
+
+```c
+// Standard mutex (non-recursive)
+SemaphoreHandle_t xSemaphoreCreateMutex( void );
+
+// Recursive mutex — the same task can take it multiple times
+SemaphoreHandle_t xSemaphoreCreateRecursiveMutex( void );
+
+// Recursive take and give
+BaseType_t xSemaphoreTakeRecursive(
+    SemaphoreHandle_t xMutex,
+    TickType_t        xBlockTime
+);
+
+BaseType_t xSemaphoreGiveRecursive( SemaphoreHandle_t xMutex );
+```
+
+A recursive mutex must be given back exactly as many times as it was taken before it becomes available to other tasks.
+
+## Cleanup
+
+```c
+void vSemaphoreDelete( SemaphoreHandle_t xSemaphore );
+```
+
+Call this when the semaphore is no longer needed to free the heap memory. Do not use the handle after deletion.
+
+## When to use each type
+
+<AccordionGroup>
+  <Accordion title="Binary semaphore — ISR-to-task signaling">
+    An ISR detects an event (DMA complete, button press, UART receive) and gives the semaphore. A dedicated task blocks on `xSemaphoreTake()`, processes the event, then loops back. Because give-and-take are independent operations, binary semaphores work correctly across ISR/task boundaries.
+  </Accordion>
+  <Accordion title="Counting semaphore — event queuing or resource pool">
+    Use a counting semaphore when multiple events can arrive faster than they are consumed, and you want to know how many are pending (event counting), or when you have N identical resources and need to limit concurrent access (pool management).
+  </Accordion>
+  <Accordion title="Mutex — protecting shared state">
+    Use a mutex when two or more tasks share a data structure (a ring buffer, a peripheral register set, a global variable). Always take the mutex before accessing the shared data, and give it back as soon as you are done. Never hold a mutex across a blocking delay.
+  </Accordion>
+  <Accordion title="Recursive mutex — reentrant library functions">
+    Use a recursive mutex when the same task may call a function that acquires the mutex while it is already held — for example, a printf implementation that calls helper functions which also need the same lock.
+  </Accordion>
+</AccordionGroup>
+
+## Examples
+
+<Tabs>
+  <Tab title="Binary semaphore: ISR to task">
+    ```c
+    #include "FreeRTOS.h"
+    #include "semphr.h"
+
+    static SemaphoreHandle_t xUartRxSemaphore;
+
+    /* ISR: called when UART receive buffer is full */
+    void UART_RX_IRQHandler( void )
+    {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+        /* Clear the interrupt flag in the peripheral */
+        UART_ClearRxFlag();
+
+        /* Signal the processing task */
+        xSemaphoreGiveFromISR( xUartRxSemaphore,
+                               &xHigherPriorityTaskWoken );
+
+        /* Request a context switch if a higher-priority task was unblocked */
+        portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+    }
+
+    /* Task: processes data whenever the ISR signals it */
+    void vUartProcessTask( void *pvParameters )
+    {
+        for( ;; )
+        {
+            /* Block until the ISR gives the semaphore */
+            if( xSemaphoreTake( xUartRxSemaphore,
+                                portMAX_DELAY ) == pdTRUE )
+            {
+                ProcessReceivedData();
+            }
+        }
+    }
+
+    void vStartUartDemo( void )
+    {
+        xUartRxSemaphore = xSemaphoreCreateBinary();
+        configASSERT( xUartRxSemaphore != NULL );
+
+        xTaskCreate( vUartProcessTask, "UartProc", 256, NULL, 3, NULL );
+    }
+    ```
+  </Tab>
+  <Tab title="Mutex: protecting shared state">
+    ```c
+    #include "FreeRTOS.h"
+    #include "semphr.h"
+
+    static SemaphoreHandle_t xSpiMutex;
+
+    /* Shared SPI peripheral access — must hold mutex while transacting */
+    void SPI_Transfer( const uint8_t *pucTxBuf,
+                       uint8_t       *pucRxBuf,
+                       size_t         xLength )
+    {
+        /* Wait up to 100 ms to acquire the mutex */
+        if( xSemaphoreTake( xSpiMutex,
+                            pdMS_TO_TICKS( 100 ) ) == pdTRUE )
+        {
+            /* Critical section: only one task drives the SPI bus */
+            SPI_HwTransfer( pucTxBuf, pucRxBuf, xLength );
+
+            /* Release the mutex so other tasks can use the SPI bus */
+            xSemaphoreGive( xSpiMutex );
+        }
+        else
+        {
+            /* Timed out waiting for the bus */
+            LogError( "SPI mutex timeout" );
+        }
+    }
+
+    void vAppInit( void )
+    {
+        xSpiMutex = xSemaphoreCreateMutex();
+        configASSERT( xSpiMutex != NULL );
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+**Never use a mutex from an ISR.** Mutex type semaphores (`xSemaphoreCreateMutex()`, `xSemaphoreCreateRecursiveMutex()`) must not be used with `xSemaphoreGiveFromISR()` or `xSemaphoreTakeFromISR()`. The priority inheritance mechanism requires a task context. Use a binary semaphore for ISR-to-task signaling instead.
+</Warning>
+
+<Tip>
+**Consider task notifications as a lighter alternative to binary semaphores.** For the common pattern of an ISR signaling a single dedicated task, FreeRTOS task notifications (`xTaskNotifyGive()` / `ulTaskNotifyTake()`) are faster and use less RAM than a binary semaphore. Semaphores remain the right choice when you need to signal from multiple senders, or signal a task that is not known at design time.
+</Tip>
+
+## API summary
+
+| Function | Context | Description |
+|---|---|---|
+| `xSemaphoreCreateBinary()` | Task | Create binary semaphore |
+| `xSemaphoreCreateCounting(max, init)` | Task | Create counting semaphore |
+| `xSemaphoreCreateMutex()` | Task | Create mutex with priority inheritance |
+| `xSemaphoreCreateRecursiveMutex()` | Task | Create recursive mutex |
+| `xSemaphoreTake(sem, ticks)` | Task | Take/wait for semaphore |
+| `xSemaphoreGive(sem)` | Task | Give/signal semaphore |
+| `xSemaphoreTakeRecursive(mutex, ticks)` | Task | Take recursive mutex |
+| `xSemaphoreGiveRecursive(mutex)` | Task | Give recursive mutex |
+| `xSemaphoreGiveFromISR(sem, &woken)` | ISR | Give from interrupt |
+| `xSemaphoreTakeFromISR(sem, &woken)` | ISR | Take from interrupt |
+| `vSemaphoreDelete(sem)` | Task | Free semaphore resources |

@@ -1,0 +1,598 @@
+---
+title: "Stream & Message Buffer API"
+description: "Complete API reference for FreeRTOS stream buffers and message buffers"
+---
+
+Stream buffers transfer a continuous byte stream between a single writer and a single reader. Message buffers build on stream buffers to transfer discrete variable-length messages. Both are declared in `stream_buffer.h` and `message_buffer.h` respectively.
+
+<Warning>
+  Stream and message buffers are designed for **single-writer, single-reader** use only. Multiple writers or multiple readers require external serialization (e.g., a critical section with block time of `0`).
+</Warning>
+
+**Key types**
+
+```c
+/* stream_buffer.h */
+typedef struct StreamBufferDef_t *StreamBufferHandle_t;
+
+/* message_buffer.h */
+typedef StreamBufferHandle_t MessageBufferHandle_t;
+```
+
+---
+
+<Tabs>
+  <Tab title="Stream buffer API">
+
+## Creation
+
+### xStreamBufferCreate
+
+```c
+StreamBufferHandle_t xStreamBufferCreate(
+    size_t xBufferSizeBytes,
+    size_t xTriggerLevelBytes
+);
+```
+
+Creates a stream buffer using dynamic memory allocation. Requires `configSUPPORT_DYNAMIC_ALLOCATION == 1` and `configUSE_STREAM_BUFFERS == 1`.
+
+<ParamField path="xBufferSizeBytes" type="size_t" required>
+  Total number of bytes the stream buffer can hold. The usable capacity is `xBufferSizeBytes - 1`.
+</ParamField>
+
+<ParamField path="xTriggerLevelBytes" type="size_t" required>
+  Minimum number of bytes that must be in the buffer before a blocked reader is unblocked. A value of `0` is treated as `1`. Must not exceed `xBufferSizeBytes`.
+</ParamField>
+
+<ResponseField name="return" type="StreamBufferHandle_t">
+  Handle to the created stream buffer, or `NULL` if there was insufficient heap.
+</ResponseField>
+
+---
+
+### xStreamBufferCreateStatic
+
+```c
+StreamBufferHandle_t xStreamBufferCreateStatic(
+    size_t               xBufferSizeBytes,
+    size_t               xTriggerLevelBytes,
+    uint8_t             *pucStreamBufferStorageArea,
+    StaticStreamBuffer_t *pxStaticStreamBuffer
+);
+```
+
+Creates a stream buffer using static memory. Requires `configSUPPORT_STATIC_ALLOCATION == 1` and `configUSE_STREAM_BUFFERS == 1`.
+
+<ParamField path="xBufferSizeBytes" type="size_t" required>
+  Size in bytes of the array pointed to by `pucStreamBufferStorageArea`.
+</ParamField>
+
+<ParamField path="xTriggerLevelBytes" type="size_t" required>
+  Trigger level in bytes. See `xStreamBufferCreate()`.
+</ParamField>
+
+<ParamField path="pucStreamBufferStorageArea" type="uint8_t *" required>
+  Pointer to a `uint8_t` array of at least `xBufferSizeBytes` bytes.
+</ParamField>
+
+<ParamField path="pxStaticStreamBuffer" type="StaticStreamBuffer_t *" required>
+  Pointer to a `StaticStreamBuffer_t` variable that will hold the stream buffer data structure.
+</ParamField>
+
+<ResponseField name="return" type="StreamBufferHandle_t">
+  Handle to the stream buffer, or `NULL` if either pointer parameter is `NULL`.
+</ResponseField>
+
+---
+
+## Sending
+
+### xStreamBufferSend
+
+```c
+size_t xStreamBufferSend(
+    StreamBufferHandle_t xStreamBuffer,
+    const void          *pvTxData,
+    size_t               xDataLengthBytes,
+    TickType_t           xTicksToWait
+);
+```
+
+Sends bytes to the stream buffer. If the buffer does not have enough space, the task blocks up to `xTicksToWait` ticks. Partial writes are possible on timeout. Call from a task only.
+
+<ParamField path="xStreamBuffer" type="StreamBufferHandle_t" required>
+  Handle to the stream buffer.
+</ParamField>
+
+<ParamField path="pvTxData" type="const void *" required>
+  Pointer to the data to send.
+</ParamField>
+
+<ParamField path="xDataLengthBytes" type="size_t" required>
+  Number of bytes to send from `pvTxData`.
+</ParamField>
+
+<ParamField path="xTicksToWait" type="TickType_t" required>
+  Maximum ticks to block waiting for space. A partial write occurs if the block time expires before all bytes are written.
+</ParamField>
+
+<ResponseField name="return" type="size_t">
+  Number of bytes actually written to the stream buffer. May be less than `xDataLengthBytes` on timeout.
+</ResponseField>
+
+---
+
+### xStreamBufferSendFromISR
+
+```c
+size_t xStreamBufferSendFromISR(
+    StreamBufferHandle_t xStreamBuffer,
+    const void          *pvTxData,
+    size_t               xDataLengthBytes,
+    BaseType_t * const   pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xStreamBufferSend()`. Does not block.
+
+<ParamField path="xStreamBuffer" type="StreamBufferHandle_t" required>
+  Handle to the stream buffer.
+</ParamField>
+
+<ParamField path="pvTxData" type="const void *" required>
+  Pointer to the data to send.
+</ParamField>
+
+<ParamField path="xDataLengthBytes" type="size_t" required>
+  Number of bytes to attempt to write.
+</ParamField>
+
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t * const" required>
+  Set to `pdTRUE` if the send unblocked a higher-priority task. Initialize to `pdFALSE`. Pass to `portYIELD_FROM_ISR()`.
+</ParamField>
+
+<ResponseField name="return" type="size_t">
+  Number of bytes actually written.
+</ResponseField>
+
+---
+
+## Receiving
+
+### xStreamBufferReceive
+
+```c
+size_t xStreamBufferReceive(
+    StreamBufferHandle_t xStreamBuffer,
+    void                *pvRxData,
+    size_t               xBufferLengthBytes,
+    TickType_t           xTicksToWait
+);
+```
+
+Reads bytes from the stream buffer. The task blocks if the buffer does not contain enough bytes to meet the trigger level. Call from a task only.
+
+<ParamField path="xStreamBuffer" type="StreamBufferHandle_t" required>
+  Handle to the stream buffer.
+</ParamField>
+
+<ParamField path="pvRxData" type="void *" required>
+  Buffer into which the received bytes are copied.
+</ParamField>
+
+<ParamField path="xBufferLengthBytes" type="size_t" required>
+  Maximum number of bytes to receive in one call.
+</ParamField>
+
+<ParamField path="xTicksToWait" type="TickType_t" required>
+  Maximum ticks to block waiting for data when the buffer is empty.
+</ParamField>
+
+<ResponseField name="return" type="size_t">
+  Number of bytes read from the stream buffer.
+</ResponseField>
+
+---
+
+### xStreamBufferReceiveFromISR
+
+```c
+size_t xStreamBufferReceiveFromISR(
+    StreamBufferHandle_t xStreamBuffer,
+    void                *pvRxData,
+    size_t               xBufferLengthBytes,
+    BaseType_t * const   pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xStreamBufferReceive()`. Does not block.
+
+<ParamField path="xStreamBuffer" type="StreamBufferHandle_t" required>
+  Handle to the stream buffer.
+</ParamField>
+
+<ParamField path="pvRxData" type="void *" required>
+  Buffer into which received bytes are copied.
+</ParamField>
+
+<ParamField path="xBufferLengthBytes" type="size_t" required>
+  Maximum bytes to receive.
+</ParamField>
+
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t * const" required>
+  Set to `pdTRUE` if receiving freed space and unblocked a higher-priority task.
+</ParamField>
+
+<ResponseField name="return" type="size_t">
+  Number of bytes read.
+</ResponseField>
+
+---
+
+## Query and control
+
+### xStreamBufferIsFull
+
+```c
+BaseType_t xStreamBufferIsFull( StreamBufferHandle_t xStreamBuffer );
+```
+
+<ParamField path="xStreamBuffer" type="StreamBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ResponseField name="return" type="BaseType_t">`pdTRUE` if full, `pdFALSE` otherwise.</ResponseField>
+
+---
+
+### xStreamBufferIsEmpty
+
+```c
+BaseType_t xStreamBufferIsEmpty( StreamBufferHandle_t xStreamBuffer );
+```
+
+<ParamField path="xStreamBuffer" type="StreamBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ResponseField name="return" type="BaseType_t">`pdTRUE` if empty, `pdFALSE` otherwise.</ResponseField>
+
+---
+
+### xStreamBufferSpacesAvailable
+
+```c
+size_t xStreamBufferSpacesAvailable( StreamBufferHandle_t xStreamBuffer );
+```
+
+<ParamField path="xStreamBuffer" type="StreamBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ResponseField name="return" type="size_t">Number of bytes that can be written before the buffer is full.</ResponseField>
+
+---
+
+### xStreamBufferBytesAvailable
+
+```c
+size_t xStreamBufferBytesAvailable( StreamBufferHandle_t xStreamBuffer );
+```
+
+<ParamField path="xStreamBuffer" type="StreamBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ResponseField name="return" type="size_t">Number of bytes currently in the buffer (readable bytes).</ResponseField>
+
+---
+
+### xStreamBufferSetTriggerLevel
+
+```c
+BaseType_t xStreamBufferSetTriggerLevel(
+    StreamBufferHandle_t xStreamBuffer,
+    size_t               xTriggerLevel
+);
+```
+
+Changes the trigger level at runtime.
+
+<ParamField path="xStreamBuffer" type="StreamBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ParamField path="xTriggerLevel" type="size_t" required>New trigger level in bytes. Must not exceed the buffer size.</ParamField>
+<ResponseField name="return" type="BaseType_t">`pdTRUE` if updated. `pdFALSE` if `xTriggerLevel` exceeded the buffer size.</ResponseField>
+
+---
+
+### xStreamBufferReset
+
+```c
+BaseType_t xStreamBufferReset( StreamBufferHandle_t xStreamBuffer );
+```
+
+Resets the buffer to empty, discarding all data. Fails if any task is currently blocked on the buffer.
+
+<ParamField path="xStreamBuffer" type="StreamBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ResponseField name="return" type="BaseType_t">`pdPASS` if reset. `pdFAIL` if a task was blocked.</ResponseField>
+
+---
+
+### vStreamBufferDelete
+
+```c
+void vStreamBufferDelete( StreamBufferHandle_t xStreamBuffer );
+```
+
+Deletes a stream buffer and frees any dynamically allocated memory.
+
+<ParamField path="xStreamBuffer" type="StreamBufferHandle_t" required>Handle to the buffer to delete.</ParamField>
+
+  </Tab>
+  <Tab title="Message buffer API">
+
+## Creation
+
+### xMessageBufferCreate
+
+```c
+MessageBufferHandle_t xMessageBufferCreate( size_t xBufferSizeBytes );
+```
+
+Creates a message buffer using dynamic memory allocation. Requires `configSUPPORT_DYNAMIC_ALLOCATION == 1` and `configUSE_STREAM_BUFFERS == 1`.
+
+<ParamField path="xBufferSizeBytes" type="size_t" required>
+  Total byte capacity of the buffer. Each stored message consumes `sizeof(size_t)` additional bytes for its length header (typically 4 bytes on 32-bit architectures).
+</ParamField>
+
+<ResponseField name="return" type="MessageBufferHandle_t">
+  Handle to the message buffer, or `NULL` if there was insufficient heap.
+</ResponseField>
+
+---
+
+### xMessageBufferCreateStatic
+
+```c
+MessageBufferHandle_t xMessageBufferCreateStatic(
+    size_t                xBufferSizeBytes,
+    uint8_t              *pucMessageBufferStorageArea,
+    StaticMessageBuffer_t *pxStaticMessageBuffer
+);
+```
+
+Creates a message buffer using static memory. Requires `configSUPPORT_STATIC_ALLOCATION == 1`.
+
+<ParamField path="xBufferSizeBytes" type="size_t" required>
+  Size of `pucMessageBufferStorageArea` in bytes.
+</ParamField>
+
+<ParamField path="pucMessageBufferStorageArea" type="uint8_t *" required>
+  Storage array of at least `xBufferSizeBytes` bytes.
+</ParamField>
+
+<ParamField path="pxStaticMessageBuffer" type="StaticMessageBuffer_t *" required>
+  Pointer to the static data structure buffer.
+</ParamField>
+
+<ResponseField name="return" type="MessageBufferHandle_t">
+  Handle to the buffer, or `NULL` if either pointer is `NULL`.
+</ResponseField>
+
+---
+
+## Sending
+
+### xMessageBufferSend
+
+```c
+size_t xMessageBufferSend(
+    MessageBufferHandle_t xMessageBuffer,
+    const void           *pvTxData,
+    size_t                xDataLengthBytes,
+    TickType_t            xTicksToWait
+);
+```
+
+Sends a complete message to the message buffer. Blocks if there is insufficient space. Either the entire message is written or nothing is written (unlike stream buffers).
+
+<ParamField path="xMessageBuffer" type="MessageBufferHandle_t" required>
+  Handle to the message buffer.
+</ParamField>
+
+<ParamField path="pvTxData" type="const void *" required>
+  Pointer to the message to send.
+</ParamField>
+
+<ParamField path="xDataLengthBytes" type="size_t" required>
+  Length of the message in bytes.
+</ParamField>
+
+<ParamField path="xTicksToWait" type="TickType_t" required>
+  Maximum ticks to block waiting for space.
+</ParamField>
+
+<ResponseField name="return" type="size_t">
+  Number of bytes written (`xDataLengthBytes` on success). Returns `0` if the call timed out before sufficient space was available.
+</ResponseField>
+
+---
+
+### xMessageBufferSendFromISR
+
+```c
+size_t xMessageBufferSendFromISR(
+    MessageBufferHandle_t xMessageBuffer,
+    const void           *pvTxData,
+    size_t                xDataLengthBytes,
+    BaseType_t           *pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xMessageBufferSend()`. Does not block.
+
+<ParamField path="xMessageBuffer" type="MessageBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ParamField path="pvTxData" type="const void *" required>Message data pointer.</ParamField>
+<ParamField path="xDataLengthBytes" type="size_t" required>Message length in bytes.</ParamField>
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t *" required>Set to `pdTRUE` if a higher-priority task was unblocked. Initialize to `pdFALSE`.</ParamField>
+
+<ResponseField name="return" type="size_t">
+  `xDataLengthBytes` if sent. `0` if insufficient space.
+</ResponseField>
+
+---
+
+## Receiving
+
+### xMessageBufferReceive
+
+```c
+size_t xMessageBufferReceive(
+    MessageBufferHandle_t xMessageBuffer,
+    void                 *pvRxData,
+    size_t                xBufferLengthBytes,
+    TickType_t            xTicksToWait
+);
+```
+
+Receives a discrete message from the buffer. If `xBufferLengthBytes` is too small for the next message, the message remains in the buffer and `0` is returned.
+
+<ParamField path="xMessageBuffer" type="MessageBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ParamField path="pvRxData" type="void *" required>Buffer to copy the received message into.</ParamField>
+<ParamField path="xBufferLengthBytes" type="size_t" required>Size of `pvRxData`. Sets the maximum receivable message size.</ParamField>
+<ParamField path="xTicksToWait" type="TickType_t" required>Maximum ticks to block when the buffer is empty.</ParamField>
+
+<ResponseField name="return" type="size_t">
+  Length in bytes of the message received. `0` if no message arrived before timeout, or if `pvRxData` was too small.
+</ResponseField>
+
+---
+
+### xMessageBufferReceiveFromISR
+
+```c
+size_t xMessageBufferReceiveFromISR(
+    MessageBufferHandle_t xMessageBuffer,
+    void                 *pvRxData,
+    size_t                xBufferLengthBytes,
+    BaseType_t           *pxHigherPriorityTaskWoken
+);
+```
+
+ISR-safe version of `xMessageBufferReceive()`.
+
+<ParamField path="xMessageBuffer" type="MessageBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ParamField path="pvRxData" type="void *" required>Receive buffer.</ParamField>
+<ParamField path="xBufferLengthBytes" type="size_t" required>Size of receive buffer.</ParamField>
+<ParamField path="pxHigherPriorityTaskWoken" type="BaseType_t *" required>Set to `pdTRUE` if a higher-priority task was unblocked.</ParamField>
+
+<ResponseField name="return" type="size_t">Length of message received, or `0`.</ResponseField>
+
+---
+
+## Query and control
+
+### xMessageBufferIsEmpty
+
+```c
+BaseType_t xMessageBufferIsEmpty( MessageBufferHandle_t xMessageBuffer );
+```
+
+<ParamField path="xMessageBuffer" type="MessageBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ResponseField name="return" type="BaseType_t">`pdTRUE` if empty.</ResponseField>
+
+---
+
+### xMessageBufferIsFull
+
+```c
+BaseType_t xMessageBufferIsFull( MessageBufferHandle_t xMessageBuffer );
+```
+
+<ParamField path="xMessageBuffer" type="MessageBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ResponseField name="return" type="BaseType_t">`pdTRUE` if full (no message of any size can be added).</ResponseField>
+
+---
+
+### xMessageBufferSpacesAvailable
+
+```c
+size_t xMessageBufferSpacesAvailable( MessageBufferHandle_t xMessageBuffer );
+```
+
+Returns free bytes. The largest sendable message is `xMessageBufferSpacesAvailable() - sizeof(size_t)` bytes.
+
+<ParamField path="xMessageBuffer" type="MessageBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ResponseField name="return" type="size_t">Free bytes in the buffer.</ResponseField>
+
+---
+
+### xMessageBufferReset
+
+```c
+BaseType_t xMessageBufferReset( MessageBufferHandle_t xMessageBuffer );
+```
+
+Resets the buffer to empty. Fails if any task is blocked.
+
+<ParamField path="xMessageBuffer" type="MessageBufferHandle_t" required>Handle to the buffer.</ParamField>
+<ResponseField name="return" type="BaseType_t">`pdPASS` if reset. `pdFAIL` if blocked tasks exist.</ResponseField>
+
+---
+
+### vMessageBufferDelete
+
+```c
+void vMessageBufferDelete( MessageBufferHandle_t xMessageBuffer );
+```
+
+Deletes a message buffer and frees memory.
+
+<ParamField path="xMessageBuffer" type="MessageBufferHandle_t" required>Handle to the buffer to delete.</ParamField>
+
+  </Tab>
+</Tabs>
+
+---
+
+## Example: ADC samples via stream buffer
+
+```c
+#include "FreeRTOS.h"
+#include "stream_buffer.h"
+
+#define STREAM_BUFFER_SIZE  256
+#define TRIGGER_LEVEL       16
+
+static StreamBufferHandle_t xADCStreamBuffer;
+
+void vSetup( void )
+{
+    xADCStreamBuffer = xStreamBufferCreate( STREAM_BUFFER_SIZE, TRIGGER_LEVEL );
+    configASSERT( xADCStreamBuffer != NULL );
+}
+
+/* ISR: called when DMA transfers ADC samples. */
+void ADC_DMA_ISR( void )
+{
+    static uint16_t ausSamples[ 8 ];
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
+    /* Assume ausSamples has been filled by DMA. */
+    xStreamBufferSendFromISR( xADCStreamBuffer,
+                              ausSamples,
+                              sizeof( ausSamples ),
+                              &xHigherPriorityTaskWoken );
+
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+}
+
+/* Task: processes ADC data. */
+void vProcessingTask( void *pvParameters )
+{
+    uint16_t ausLocalBuffer[ 8 ];
+    size_t   xBytesReceived;
+
+    for( ;; )
+    {
+        xBytesReceived = xStreamBufferReceive(
+            xADCStreamBuffer,
+            ausLocalBuffer,
+            sizeof( ausLocalBuffer ),
+            portMAX_DELAY );
+
+        if( xBytesReceived > 0 )
+        {
+            /* Process xBytesReceived / sizeof(uint16_t) samples. */
+        }
+    }
+}
+```
